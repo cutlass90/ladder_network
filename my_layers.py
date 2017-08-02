@@ -46,6 +46,10 @@ from tensorflow.python.ops import variable_scope
 from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.training import moving_averages
 
+
+from tensorflow.python.ops.random_ops import random_normal
+
+
 # from my_nn_impl import batch_normalization as my_batch_normalization
 
 # TODO(b/28426988): Replace legacy_* fns migrated from slim.
@@ -262,83 +266,12 @@ def batch_norm(inputs,
       custom_getter=layer_variable_getter) as sc:
     inputs = ops.convert_to_tensor(inputs)
 
-    # Determine whether we can use the core layer class.
-    if (batch_weights is None and
-        updates_collections is ops.GraphKeys.UPDATE_OPS and
-        not zero_debias_moving_mean):
-      # Use the core layer class.
-      axis = 1 if data_format == DATA_FORMAT_NCHW else -1
-      if not param_initializers:
-        param_initializers = {}
-      beta_initializer = param_initializers.get('beta',
-                                                init_ops.zeros_initializer())
-      gamma_initializer = param_initializers.get('gamma',
-                                                 init_ops.ones_initializer())
-      moving_mean_initializer = param_initializers.get(
-          'moving_mean', init_ops.zeros_initializer())
-      moving_variance_initializer = param_initializers.get(
-          'moving_variance', init_ops.ones_initializer())
-      if not param_regularizers:
-        param_regularizers = {}
-      beta_regularizer = param_regularizers.get('beta')
-      gamma_regularizer = param_regularizers.get('gamma')
-      layer = normalization_layers.BatchNormalization(
-          axis=axis,
-          momentum=decay,
-          epsilon=epsilon,
-          center=center,
-          scale=scale,
-          beta_initializer=beta_initializer,
-          gamma_initializer=gamma_initializer,
-          moving_mean_initializer=moving_mean_initializer,
-          moving_variance_initializer=moving_variance_initializer,
-          beta_regularizer=beta_regularizer,
-          gamma_regularizer=gamma_regularizer,
-          trainable=trainable,
-          renorm=renorm,
-          renorm_clipping=renorm_clipping,
-          renorm_momentum=renorm_decay,
-          name=sc.name,
-          _scope=sc,
-          _reuse=reuse)
-      outputs = layer.apply(inputs, training=is_training)
-
-      # Add variables to collections.
-      _add_variable_to_collections(
-          layer.moving_mean, variables_collections, 'moving_mean')
-      _add_variable_to_collections(
-          layer.moving_variance, variables_collections, 'moving_variance')
-      if layer.beta:
-        _add_variable_to_collections(layer.beta, variables_collections, 'beta')
-      if layer.gamma:
-        _add_variable_to_collections(
-            layer.gamma, variables_collections, 'gamma')
-
-      if activation_fn is not None:
-        outputs = activation_fn(outputs)
-      return utils.collect_named_outputs(outputs_collections,
-                                         sc.original_name_scope, outputs)
-
-    # Not supported by layer class: batch_weights argument,
-    # and custom updates_collections. In that case, use the legacy BN
-    # implementation.
-    # Custom updates collections are not supported because the update logic
-    # is different in this case, in particular w.r.t. "forced updates" and
-    # update op reuse.
-    if renorm:
-      raise ValueError('renorm is not supported with batch_weights, '
-                       'updates_collections or zero_debias_moving_mean')
     inputs_shape = inputs.get_shape()
     inputs_rank = inputs_shape.ndims
     if inputs_rank is None:
       raise ValueError('Inputs %s has undefined rank.' % inputs.name)
     dtype = inputs.dtype.base_dtype
-    if batch_weights is not None:
-      batch_weights = ops.convert_to_tensor(batch_weights)
-      inputs_shape[0:1].assert_is_compatible_with(batch_weights.get_shape())
-      # Reshape batch weight values so they broadcast across inputs.
-      nshape = [-1] + [1 for _ in range(inputs_rank - 1)]
-      batch_weights = array_ops.reshape(batch_weights, nshape)
+
 
     if data_format == DATA_FORMAT_NCHW:
       moments_axes = [0] + list(range(2, inputs_rank))
@@ -480,12 +413,16 @@ def batch_norm(inputs,
         gamma = array_ops.reshape(gamma, params_shape_broadcast)
 
     # Compute batch_normalization.
-    outputs = my_batch_normalization(inputs, mean, variance, beta, gamma,
-                                     epsilon, noise_std)
+    # print('my_batch_normalization')
+    inv = math_ops.rsqrt(variance + epsilon)
+    noise = random_normal(array_ops.shape(inputs), stddev=noise_std)
+    only_batch_norm = (inputs - mean)*inv + noise
+    outputs = only_batch_norm*gamma + beta
+
     outputs.set_shape(inputs_shape)
     if activation_fn is not None:
       outputs = activation_fn(outputs)
-    return utils.collect_named_outputs(outputs_collections,
+    return only_batch_norm, utils.collect_named_outputs(outputs_collections,
                                        sc.original_name_scope, outputs)
 
 
