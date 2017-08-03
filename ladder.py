@@ -4,8 +4,8 @@ import math
 import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
-
-from my_layers import batch_norm as my_batch_norm
+from tensorflow.contrib.layers.python.layers.layers import batch_norm
+# from my_layers import batch_norm as my_batch_norm
 from model_abstract import Model
 
 
@@ -19,25 +19,24 @@ class Ladder(Model):
         self.do_train = do_train
 
         self.structure = [1000, 500, 250, 250, 250, self.n_classes]
-        self.lambda_ = [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
-        self.noise_std = 0.2
+        self.lambda_ = [1000, 10,  0.1, 0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
+        self.noise_std = 0.3
 
-        self.mean, self.std, self.z_noised, self.z_clear, self.z_denoised = [], [], [], [], []
+        self.z_denoised = []
         self.graph = tf.Graph()
         with self.graph.as_default():
             tf.set_random_seed(1)
             with tf.variable_scope(scope):
                 self.create_graph()
             if do_train:
-                self.cost_sup, self.cost_unsup = self.create_cost_graph(self.labels,
-                    self.logits_noised, self.z_clear, self.z_denoised)
-                s_sup, s_unsup = self.create_summary(self.labels, self.logits_clear)
-                self.train_sup, self.train_unsup = self.create_optimizer_graph(
-                    self.cost_sup, self.cost_unsup)
+
+                self.cost_sup = self.create_sup_cost(self.labels, self.logits_lab_noised)
+                self.cost_unsup = self.create_unsup_cost(self.z_clear, self.z_denoised)
+                summary = self.create_summary(self.labels, self.logits_lab_clear)
+                self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
                 self.train_writer, self.test_writer = self.create_summary_writers(
                     'summary/ladder')
-                self.merged_sup = tf.summary.merge(s_sup)
-                self.merged_unsup = tf.summary.merge(s_unsup)
+                self.merged = tf.summary.merge(summary)
 
             self.sess = self.create_session()
             self.sess.run(tf.global_variables_initializer())
@@ -50,6 +49,7 @@ class Ladder(Model):
     def create_graph(self):
         print('Creat graph')
 
+        self.images,\
         self.inputs,\
         self.labels,\
         self.weight_decay,\
@@ -57,31 +57,43 @@ class Ladder(Model):
         self.keep_prob,\
         self.is_training = self.input_graph() # inputs shape is # b*n_f x h1 x c1
 
-        self.logits_clear = self.encoder(self.inputs,
-            structure=self.structure, reuse=False, noise_std=None)
-        noised_inputs = self.inputs+tf.random_normal(tf.shape(self.inputs),
-            stddev=self.noise_std)
-        self.logits_noised = self.encoder(noised_inputs,
-            structure=self.structure, reuse=True, noise_std=self.noise_std)
-        self.pred = tf.argmax(self.logits_clear, axis=1)
+        # supervised mode
+        self.logits_lab_clear, _, _, _ = self.encoder(self.inputs, structure=self.structure,
+            reuse=False, noise_std=0, save_statistic=True)
+
+        noised_inputs = self.inputs + self.add_noise(self.inputs, self.noise_std)
+        self.logits_lab_noised, _, _, _ = self.encoder(self.inputs, structure=self.structure,
+            reuse=True, noise_std=self.noise_std, save_statistic=False)
+
+        # unsupervised mode
+        self.logits_unlab_clear, self.mean, self.std, self.z_clear = self.encoder(
+            self.images, structure=self.structure, reuse=True, noise_std=0,
+            save_statistic=False)
+
+        noised_inputs = self.images + self.add_noise(self.images, self.noise_std)
+        self.logits_unlab_noised, _, _, self.z_noised = self.encoder(noised_inputs,
+            structure=self.structure, reuse=True, noise_std=self.noise_std,
+            save_statistic=False)
+
+        self.pred = tf.argmax(self.logits_lab_clear, axis=1)
 
         # [print(v) for v in tf.trainable_variables()]
 
-        y = tf.nn.softmax(self.logits_noised)
+        y = tf.nn.softmax(self.logits_lab_noised)
 
         self.decoder(inputs=y, structure=self.structure)
         
-        # print()
-        # print('len z_clear', len(self.z_clear))
-        # print('len z_noised', len(self.z_noised))
-        # print('len z_denoised', len(self.z_denoised))
-        # for i in range(len(self.structure)+1):
-        #     print('\t ', i)
-        #     print('mean', self.mean[i])
-        #     print('std', self.std[i])
-        #     print('z_noised', self.z_noised[i])
-        #     print('z_clear', self.z_clear[i])
-        #     print('z_denoised', self.z_denoised[i])
+        print()
+        print('len z_clear', len(self.z_clear))
+        print('len z_noised', len(self.z_noised))
+        print('len z_denoised', len(self.z_denoised))
+        for i in range(len(self.structure)+1):
+            print('\t ', i)
+            print('mean', self.mean[i])
+            print('std', self.std[i])
+            print('z_noised', self.z_noised[i])
+            print('z_clear', self.z_clear[i])
+            print('z_denoised', self.z_denoised[i])
 
         print('Done!')
 
@@ -89,6 +101,9 @@ class Ladder(Model):
     # --------------------------------------------------------------------------
     def input_graph(self):
         print('\tinput_graph')
+        images = tf.placeholder(tf.float32, shape=[None, self.input_dim],
+            name='images')
+
         inputs = tf.placeholder(tf.float32, shape=[None, self.input_dim],
             name='inputs')
 
@@ -103,43 +118,53 @@ class Ladder(Model):
 
         is_training = tf.placeholder(tf.bool, name='is_training')
 
-        return inputs, labels, weight_decay, learn_rate, keep_prob, is_training
+        return images, inputs, labels, weight_decay, learn_rate, keep_prob, is_training
 
+    def add_noise(self, inputs, std):
+        return inputs + tf.random_normal(tf.shape(inputs),
+                    stddev=std)
 
     # --------------------------------------------------------------------------
-    def encoder(self, inputs, structure, reuse, noise_std):
-        # if noise_std is None no noise was used
+    def encoder(self, inputs, structure, reuse, noise_std, save_statistic):
         print('\tencoder')
-        if noise_std is None: # if clear mode
-            self.z_clear.append(inputs)
-        else: # noised mode
-            self.z_noised.append(inputs)
+        mean_list, std_list, z_list = [], [], []
         L = len(structure)
+        
+        z_list.append(inputs)
+        mean, var = tf.nn.moments(inputs, axes=[0])
+        mean_list.append(mean)
+        std_list.append(tf.sqrt(var))
+
+        h = inputs
         for i, layer in enumerate(structure):
-            if noise_std is None: # if clear mode
-                mean, var = tf.nn.moments(inputs, axes=[0])
-                self.mean.append(mean)
-                self.std.append(tf.sqrt(var))
-            inputs = tf.layers.dense(inputs=inputs, units=layer, activation=None,
+            z_pre = tf.layers.dense(inputs=h, units=layer, activation=None,
                 kernel_initializer=tf.contrib.layers.xavier_initializer(),
                 reuse=reuse, name='encoder'+str(i))
-            if i == (L-1):
-                mean, var = tf.nn.moments(inputs, axes=[0])
-                self.mean.append(mean)
-                self.std.append(tf.sqrt(var))
-            if noise_std is None: # if clear mode
-                z, inputs = my_batch_norm(inputs=inputs, scale=True,
+
+            mean, var = tf.nn.moments(z_pre, axes=[0])
+            mean_list.append(mean)
+            std_list.append(tf.sqrt(var))
+
+            if save_statistic:
+                z = batch_norm(inputs=z_pre, scale=False, center=False,
                     updates_collections=None, is_training=self.is_training,
-                    reuse=reuse, scope='encoder_bn'+str(i), noise_std=0)
-                self.z_clear.append(z)
-            else: # noised mode
-                z, inputs = my_batch_norm(inputs=inputs, scale=True,
-                    updates_collections=None, is_training=self.is_training,
-                    reuse=reuse, scope='encoder_bn'+str(i), noise_std=noise_std)        
-                self.z_noised.append(z)
-            if i < len(structure)-1:
-                inputs = tf.nn.relu(inputs)
-        return inputs
+                    scope='encoder_bn'+str(i), decay=0.99, trainable=False)
+            else:
+                z = self.local_batch_norm(z_pre)
+            z = self.add_noise(z, noise_std)
+            z_list.append(z)
+
+            with tf.variable_scope('gamma_beta', reuse=reuse):
+                sh = z.get_shape().as_list()[1]
+                beta = tf.get_variable(name='beta'+str(i),
+                    initializer=tf.zeros([sh]))
+                if i < L-1:
+                    h = tf.nn.relu((z+beta))
+                else:
+                    gamma = tf.get_variable(name='gamma'+str(i),
+                        initializer=tf.ones([sh]))
+                    h = gamma*(z+beta)
+        return h, mean_list, std_list, z_list
 
 
     # --------------------------------------------------------------------------
@@ -156,14 +181,14 @@ class Ladder(Model):
         self.z_denoised.append(z_denoised)
 
         for i, layer in enumerate(structure):
-            # print(i, layer)
+            print(i, layer)
             u = tf.layers.dense(inputs=self.z_clear[L-i-1], units=layer, activation=None,
                 kernel_initializer=tf.contrib.layers.xavier_initializer())
             u = self.local_batch_norm(u)
-            # print('u',u)
-            # print('z_noised', self.z_noised[L-i-1])
+            print('u',u)
+            print('z_noised', self.z_noised[L-i-1])
             z_denoised = self.g_gauss(self.z_noised[L-i-1], u, layer)
-            # print('z_denoised',z_denoised)
+            print('z_denoised',z_denoised)
             z_denoised = (z_denoised - self.mean[L-i-1])/(self.std[L-i-1] + 1e-3)
             self.z_denoised.append(z_denoised)
         self.z_denoised = list(reversed(self.z_denoised))
@@ -171,11 +196,12 @@ class Ladder(Model):
 
 
     # --------------------------------------------------------------------------
-    def local_batch_norm(self, inputs):
+    def local_batch_norm(self, inputs, mean=None, var=None):
         # simple batch norm by last dimention
         sh = inputs.get_shape().as_list()
         inputs = tf.reshape(inputs, shape=[-1, sh[-1]])
-        mean, var = tf.nn.moments(inputs, axes=[0])
+        if mean is None or var is None:
+            mean, var = tf.nn.moments(inputs, axes=[0])
         inv = tf.rsqrt(var + 1e-3)
         return (inputs - mean)*inv
 
@@ -201,56 +227,84 @@ class Ladder(Model):
 
 
     # --------------------------------------------------------------------------
-    def create_cost_graph(self, labels, logits, z_clear, z_denoised):
-        print('create_cost_graph')
-
-        # supervised loss
+    def create_sup_cost(self, labels, logits):
+        print('create_sup_cost')
         self.cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
             labels=labels,
             logits=logits))
         self.L2_loss = self.weight_decay*sum([tf.reduce_mean(tf.square(var))
             for var in tf.trainable_variables()])
+        return self.cross_entropy + self.L2_loss
 
-        # unsupervised loss
+
+    # --------------------------------------------------------------------------
+    def create_unsup_cost(self, z_clear, z_denoised):
+        print('create_unsup_cost')      
         denoise_loss = []
         for lamb, layer_width, z_cl, z_denois in zip(self.lambda_,
             [self.input_dim]+self.structure, z_clear, z_denoised):
-            # print('\n', lamb, layer_width, z_cl, z_denois)
+            print('\n', lamb, layer_width, z_cl, z_denois)
 
-            denoise_loss.append(lamb/layer_width*tf.reduce_mean(tf.square(
-                tf.norm(z_cl-z_denois, axis=1))))
+            # denoise_loss.append(lamb/layer_width*tf.reduce_mean(tf.square(
+            #     tf.norm(z_cl-z_denois, axis=1))))
+
+            denoise_loss.append(tf.reduce_mean(tf.reduce_sum(
+                tf.square(z_cl-z_denois), 1))/layer_width*lamb)
 
         self.denoise_loss = tf.add_n(denoise_loss)
-
-        cost_sup = self.cross_entropy + self.L2_loss
-        cost_unsup = self.denoise_loss + self.L2_loss
-
-        return cost_sup, cost_unsup
+        return self.denoise_loss
 
 
     # --------------------------------------------------------------------------
     def create_summary(self, labels, logits):
-        s_sup, s_unsup = [], []
-        s_sup.append(tf.summary.scalar('cross_entropy', self.cross_entropy))
-        s_sup.append(tf.summary.scalar('L2 loss', self.L2_loss))
+        summary = []
+        summary.append(tf.summary.scalar('cross_entropy', self.cross_entropy))
+        summary.append(tf.summary.scalar('L2 loss', self.L2_loss))
+        summary.append(tf.summary.scalar('denoise_loss', self.denoise_loss))
 
         precision, recall, f1, accuracy = self.get_metrics(labels, logits)
         for i in range(self.n_classes):
-            s_sup.append(tf.summary.scalar('Class {} f1 score'.format(i), f1[i]))
-        s_sup.append(tf.summary.scalar('Accuracy', accuracy))
+            summary.append(tf.summary.scalar('Class {} f1 score'.format(i), f1[i]))
+        summary.append(tf.summary.scalar('Accuracy', accuracy))
         
-        s_unsup.append(tf.summary.scalar('denoise_loss', self.denoise_loss))
-        return s_sup, s_unsup
+        return summary
 
 
     # --------------------------------------------------------------------------
-    def create_optimizer_graph(self, cost_sup, cost_unsup):
+    def create_optimizer_graph(self, cost):
         print('create_optimizer_graph')
         with tf.variable_scope('optimizer_graph'):
             optimizer = tf.train.AdamOptimizer(self.learn_rate)
-            train_sup = optimizer.minimize(cost_sup)
-            train_unsup = optimizer.minimize(cost_unsup)
-        return train_sup, train_unsup
+            train = optimizer.minimize(cost)
+        return train
+
+
+    # --------------------------------------------------------------------------
+    def train_step(self, inputs_lab, inputs_unlab, labels, weight_decay,
+        learn_rate, keep_prob):
+
+        feedDict = {self.images : inputs_unlab,
+            self.inputs : inputs_lab,
+            self.labels : labels,
+            self.weight_decay : weight_decay,
+            self.learn_rate : learn_rate,
+            self.keep_prob : keep_prob,
+            self.is_training : True}
+        self.sess.run(self.train, feed_dict=feedDict)
+
+
+    # --------------------------------------------------------------------------
+    def save_summaries(self, inputs_lab, inputs_unlab, labels, weight_decay,
+        keep_prob, is_training, writer, it):
+
+        feedDict = {self.images : inputs_unlab,
+            self.inputs : inputs_lab,
+            self.labels : labels,
+            self.weight_decay : weight_decay,
+            self.keep_prob : keep_prob,
+            self.is_training : is_training}
+        summary = self.sess.run(self.merged, feed_dict=feedDict)
+        writer.add_summary(summary, it)
 
 
     # --------------------------------------------------------------------------
@@ -269,7 +323,7 @@ class Ladder(Model):
             test_batch = test_data_loader.next_batch(batch_size)
             self.train_step(train_batch[0], images, train_batch[1], weight_decay,
                 learn_rate, keep_prob)
-            if current_iter%50 == 0:
+            if current_iter%10 == 0:
                 self.save_summaries(train_batch[0], images, train_batch[1],
                     weight_decay, keep_prob, True, self.train_writer, current_iter)
                 self.save_summaries(test_batch[0], test_batch[0], test_batch[1],
@@ -281,37 +335,7 @@ class Ladder(Model):
         print('\nTrain finished!')
         print("Training time --- %s seconds ---" % (time.time() - start_time))
 
-    # --------------------------------------------------------------------------
-    def train_step(self, inputs_lab, inputs_unlab, labels, weight_decay,
-        learn_rate, keep_prob):
 
-        feedDict = {self.inputs : inputs_lab,
-            self.labels : labels,
-            self.weight_decay : weight_decay,
-            self.learn_rate : learn_rate,
-            self.keep_prob : keep_prob,
-            self.is_training : True}
-        self.sess.run(self.train_sup, feed_dict=feedDict)
-
-        feedDict[self.inputs] = inputs_unlab
-        self.sess.run(self.train_unsup, feed_dict=feedDict)
-
-
-    # --------------------------------------------------------------------------
-    def save_summaries(self, inputs_lab, inputs_unlab, labels, weight_decay,
-        keep_prob, is_training, writer, it):
-
-        feedDict = {self.inputs : inputs_lab,
-            self.labels : labels,
-            self.weight_decay : weight_decay,
-            self.keep_prob : keep_prob,
-            self.is_training : is_training}
-        summary = self.sess.run(self.merged_sup, feed_dict=feedDict)
-        writer.add_summary(summary, it)
-
-        feedDict[self.inputs] = inputs_unlab
-        summary = self.sess.run(self.merged_unsup, feed_dict=feedDict)
-        writer.add_summary(summary, it)
 
 def test_classifier():
     from tensorflow.examples.tutorials.mnist import input_data
@@ -325,9 +349,9 @@ def test_classifier():
 
     labeled_size = 100
     batch_size = 100
-    weight_decay = 2e-2
+    weight_decay = 2e-4
     n_iter = 200000
-    learn_rate_start = 1e-3
+    learn_rate_start = 1e-2
     learn_rate_end = 1e-4
     keep_prob = 0.5
     save_model_every_n_iter = 35000
