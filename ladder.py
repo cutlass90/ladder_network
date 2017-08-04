@@ -57,20 +57,23 @@ class Ladder(Model):
         self.keep_prob,\
         self.is_training = self.input_graph() # inputs shape is # b*n_f x h1 x c1
 
-        # supervised mode
+        # --- === supervised mode === ---
+        # clean pass
         self.logits_lab_clear, _, _, _ = self.encoder(self.inputs, structure=self.structure,
             reuse=False, noise_std=0, save_statistic=True)
-
-        noised_inputs = self.inputs + self.add_noise(self.inputs, self.noise_std)
+        #noised pass
+        noised_inputs = self.add_noise(self.inputs, self.noise_std)
         self.logits_lab_noised, _, _, _ = self.encoder(noised_inputs, structure=self.structure,
             reuse=True, noise_std=self.noise_std, save_statistic=False)
 
-        # unsupervised mode
+
+        # --- === unsupervised mode === ---
+        # clean pass
         _, self.mean, self.std, self.z_clear = self.encoder(
             self.images, structure=self.structure, reuse=True, noise_std=0,
             save_statistic=False)
-
-        noised_inputs = self.images + self.add_noise(self.images, self.noise_std)
+        # noised pass
+        noised_inputs = self.add_noise(self.images, self.noise_std)
         self.logits_unlab_noised, _, _, self.z_noised = self.encoder(noised_inputs,
             structure=self.structure, reuse=True, noise_std=self.noise_std,
             save_statistic=False)
