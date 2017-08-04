@@ -136,9 +136,8 @@ class Ladder(Model):
         L = len(structure)
         
         z_list.append(inputs)
-        mean, var = tf.nn.moments(inputs, axes=[0])
-        mean_list.append(mean)
-        std_list.append(tf.sqrt(var))
+        mean_list.append(0)
+        std_list.append(1)
 
         h = inputs
         for i, layer in enumerate(structure):
