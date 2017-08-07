@@ -197,7 +197,8 @@ class Ladder(Model):
                 gamma = tf.get_variable(name='gamma'+str(i),
                     initializer=tf.ones([sh]))
             h = gamma*(z+beta)
-            h = tf.nn.relu(h) if i < L-1 else h
+            if type(layer).__name__ == 'ConvoLayer':
+                h = layer.activation(h) if i < L-1 else h
 
         h = tf.reshape(h, [-1, h.get_shape().as_list()[-1]])
         print('encoder final shape', h)
