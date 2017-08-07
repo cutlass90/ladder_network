@@ -6,11 +6,11 @@ import numpy as np
 from tqdm import tqdm
 from tensorflow.contrib.layers.python.layers.layers import batch_norm
 
-# from ladder import Ladder
 from model_abstract import Model
+from param import encoder as encoder_structure
 
 
-class ConvoLadder(Model):
+class Ladder(Model):
 
     # --------------------------------------------------------------------------
     def __init__(self, input_dim, n_classes, do_train, scope):
@@ -36,7 +36,7 @@ class ConvoLadder(Model):
                 summary = self.create_summary(self.labels, self.logits_lab_clear)
                 self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
                 self.train_writer, self.test_writer = self.create_summary_writers(
-                    'summary/convo_ladder')
+                    'summary/ladder')
                 self.merged = tf.summary.merge(summary)
 
             self.sess = self.create_session()
@@ -75,6 +75,21 @@ class ConvoLadder(Model):
         self.logits_unlab_noised, _, _, self.z_noised = self.encoder(self.images,
             structure=self.structure, reuse=True, noise_std=self.noise_std,
             save_statistic=False)
+
+
+        # [print(v) for v in tf.trainable_variables()]
+        print()
+        print('len z_clear', len(self.z_clear))
+        print('len z_noised', len(self.z_noised))
+        print('len z_denoised', len(self.z_denoised))
+        for i in range(len(self.structure)+1):
+            print('\t ', i)
+            print('mean', self.mean[i])
+            print('std', self.std[i])
+            print('z_noised', self.z_noised[i])
+            print('z_clear', self.z_clear[i])
+            # print('z_denoised', self.z_denoised[i])
+
 
         y = tf.nn.softmax(self.logits_unlab_noised)
 
@@ -127,7 +142,6 @@ class ConvoLadder(Model):
     # --------------------------------------------------------------------------
     def encoder(self, inputs, structure, reuse, noise_std, save_statistic):
         print('\tencoder')
-        inputs = tf.reshape(inputs, shape=[-1, 28, 28, 1])
         inputs = self.add_noise(inputs, noise_std)
         mean_list, std_list, z_list = [], [], []
         L = len(structure)
@@ -137,16 +151,35 @@ class ConvoLadder(Model):
         std_list.append(1)
 
         h = inputs
-        for i, layer in enumerate(structure):
+        for i, layer in enumerate(encoder_structure):
             # print(i, layer)
-            z_pre = tf.layers.conv2d(inputs=h, filters=layer, kernel_size=3,
-                activation=None, padding='same',
-                kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                reuse=reuse, name='encoder'+str(i))
+            if i == 0:
+                h = tf.reshape(h, [-1, 28, 28, 1])
+            else:
+                h = tf.reshape(h, previous_shape)
 
-            mean, std = self.get_mean_std(z_pre)
+            if type(layer).__name__ == 'ConvoLayer':
+                z_pre = tf.layers.conv2d(h, layer.filters, layer.kernel_size,
+                    layer.strides, layer.padding,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    reuse=reuse, name='encoder'+str(i))
+            elif type(layer).__name__ == 'MaxPool':
+                z_pre = tf.layers.max_pooling2d(h, layer.pool_size,
+                    layer.strides, layer.padding)
+            elif type(layer).__name__ == 'AvrPool':
+                z_pre = tf.layers.average_pooling2d(h, layer.pool_size,
+                    layer.strides, layer.padding)
+            else:
+                raise NotImplementedError('Type {} of layer is not implemented'.format(
+                    type(layer).__name__))
+            previous_shape = tf.shape(z_pre)
+            z_pre = tf.reshape(z_pre, [-1, z_pre.get_shape().as_list()[-1]])
+            # print('z_pre', z_pre)
+
+
+            mean, var = tf.nn.moments(z_pre, axes=[0])
             mean_list.append(mean)
-            std_list.append(std)
+            std_list.append(tf.sqrt(var))
 
             if save_statistic:
                 z = batch_norm(inputs=z_pre, scale=False, center=False,
@@ -158,16 +191,16 @@ class ConvoLadder(Model):
             z_list.append(z)
 
             with tf.variable_scope('gamma_beta', reuse=reuse):
-                sh = z.get_shape().as_list()[-1]
+                sh = z.get_shape().as_list()[1]
                 beta = tf.get_variable(name='beta'+str(i),
                     initializer=tf.zeros([sh]))
                 gamma = tf.get_variable(name='gamma'+str(i),
                     initializer=tf.ones([sh]))
             h = gamma*(z+beta)
             h = tf.nn.relu(h) if i < L-1 else h
-        sh = h.get_shape().as_list()[1:3]
-        h = tf.layers.average_pooling2d(inputs=h, pool_size=sh, strides=1)
-        h = tf.reshape(h, shape=[-1, self.n_classes])
+
+        h = tf.reshape(h, [-1, h.get_shape().as_list()[-1]])
+        print('encoder final shape', h)
         return h, mean_list, std_list, z_list
 
 
@@ -185,11 +218,17 @@ class ConvoLadder(Model):
         
 
         for i, layer in enumerate(structure):
-            # print(i, layer)
+            print(i, layer)
+            # u = tf.layers.dense(inputs=z_est, units=layer, activation=None,
+            #     kernel_initializer=tf.contrib.layers.xavier_initializer())
+
+
             u = tf.layers.conv2d_transpose(inputs=z_est, filters=layer, kernel_size=3,
                 activation=None, padding='same',
                 kernel_initializer=tf.contrib.layers.xavier_initializer(),
                 name='decoder'+str(i))
+
+
             u = self.local_batch_norm(u)
             # print('u',u)
             # print('z_noised', self.z_noised[L-i-1])
@@ -200,12 +239,6 @@ class ConvoLadder(Model):
         self.z_denoised = list(reversed(self.z_denoised))
 
 
-    def get_mean_std(self, inputs):
-        sh = inputs.get_shape().as_list()
-        inputs = tf.reshape(inputs, shape=[-1, sh[-1]])
-        mean, var = tf.nn.moments(inputs, axes=[0])
-        return mean, tf.sqrt(var)
-
 
     # --------------------------------------------------------------------------
     def local_batch_norm(self, inputs, mean=None, var=None):
@@ -215,9 +248,7 @@ class ConvoLadder(Model):
         if mean is None or var is None:
             mean, var = tf.nn.moments(inputs, axes=[0])
         inv = tf.rsqrt(var + 1e-9)
-        inputs = (inputs - mean)*inv
-        inputs = tf.reshape(inputs, shape=[-1] + sh[1:])
-        return inputs
+        return (inputs - mean)*inv
 
 
     # --------------------------------------------------------------------------
@@ -393,7 +424,7 @@ def test_classifier():
     print('total number of test data', test_data_loader.num_examples)
     image_provider = ImageProvider()
 
-    cl = ConvoLadder(input_dim=784, n_classes=10, do_train=True, scope='ladder')
+    cl = Ladder(input_dim=784, n_classes=10, do_train=True, scope='ladder')
     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
         n_iter, save_model_every_n_iter, path_to_model)
