@@ -5,11 +5,12 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 from tensorflow.contrib.layers.python.layers.layers import batch_norm
-# from my_layers import batch_norm as my_batch_norm
+
+# from ladder import Ladder
 from model_abstract import Model
 
 
-class Ladder(Model):
+class ConvoLadder(Model):
 
     # --------------------------------------------------------------------------
     def __init__(self, input_dim, n_classes, do_train, scope):
@@ -18,7 +19,7 @@ class Ladder(Model):
         self.n_classes = n_classes
         self.do_train = do_train
 
-        self.structure = [1000, 500, 250, 250, 250, self.n_classes]
+        self.structure = [30, 60, 20, self.n_classes]
         self.lambda_ = [1000, 10,  0.1, 0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
         self.noise_std = 0.3
 
@@ -35,7 +36,7 @@ class Ladder(Model):
                 summary = self.create_summary(self.labels, self.logits_lab_clear)
                 self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
                 self.train_writer, self.test_writer = self.create_summary_writers(
-                    'summary/ladder')
+                    'summary/convo_ladder')
                 self.merged = tf.summary.merge(summary)
 
             self.sess = self.create_session()
@@ -126,6 +127,7 @@ class Ladder(Model):
     # --------------------------------------------------------------------------
     def encoder(self, inputs, structure, reuse, noise_std, save_statistic):
         print('\tencoder')
+        inputs = tf.reshape(inputs, shape=[-1, 28, 28, 1])
         inputs = self.add_noise(inputs, noise_std)
         mean_list, std_list, z_list = [], [], []
         L = len(structure)
@@ -137,13 +139,14 @@ class Ladder(Model):
         h = inputs
         for i, layer in enumerate(structure):
             # print(i, layer)
-            z_pre = tf.layers.dense(inputs=h, units=layer, activation=None,
+            z_pre = tf.layers.conv2d(inputs=h, filters=layer, kernel_size=3,
+                activation=None, padding='same',
                 kernel_initializer=tf.contrib.layers.xavier_initializer(),
                 reuse=reuse, name='encoder'+str(i))
 
-            mean, var = tf.nn.moments(z_pre, axes=[0])
+            mean, std = self.get_mean_std(z_pre)
             mean_list.append(mean)
-            std_list.append(tf.sqrt(var))
+            std_list.append(std)
 
             if save_statistic:
                 z = batch_norm(inputs=z_pre, scale=False, center=False,
@@ -155,13 +158,16 @@ class Ladder(Model):
             z_list.append(z)
 
             with tf.variable_scope('gamma_beta', reuse=reuse):
-                sh = z.get_shape().as_list()[1]
+                sh = z.get_shape().as_list()[-1]
                 beta = tf.get_variable(name='beta'+str(i),
                     initializer=tf.zeros([sh]))
                 gamma = tf.get_variable(name='gamma'+str(i),
                     initializer=tf.ones([sh]))
             h = gamma*(z+beta)
             h = tf.nn.relu(h) if i < L-1 else h
+        sh = h.get_shape().as_list()[1:3]
+        h = tf.layers.average_pooling2d(inputs=h, pool_size=sh, strides=1)
+        h = tf.reshape(h, shape=[-1, self.n_classes])
         return h, mean_list, std_list, z_list
 
 
@@ -180,8 +186,10 @@ class Ladder(Model):
 
         for i, layer in enumerate(structure):
             # print(i, layer)
-            u = tf.layers.dense(inputs=z_est, units=layer, activation=None,
-                kernel_initializer=tf.contrib.layers.xavier_initializer())
+            u = tf.layers.conv2d_transpose(inputs=z_est, filters=layer, kernel_size=3,
+                activation=None, padding='same',
+                kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                name='decoder'+str(i))
             u = self.local_batch_norm(u)
             # print('u',u)
             # print('z_noised', self.z_noised[L-i-1])
@@ -192,6 +200,12 @@ class Ladder(Model):
         self.z_denoised = list(reversed(self.z_denoised))
 
 
+    def get_mean_std(self, inputs):
+        sh = inputs.get_shape().as_list()
+        inputs = tf.reshape(inputs, shape=[-1, sh[-1]])
+        mean, var = tf.nn.moments(inputs, axes=[0])
+        return mean, tf.sqrt(var)
+
 
     # --------------------------------------------------------------------------
     def local_batch_norm(self, inputs, mean=None, var=None):
@@ -201,7 +215,9 @@ class Ladder(Model):
         if mean is None or var is None:
             mean, var = tf.nn.moments(inputs, axes=[0])
         inv = tf.rsqrt(var + 1e-9)
-        return (inputs - mean)*inv
+        inputs = (inputs - mean)*inv
+        inputs = tf.reshape(inputs, shape=[-1] + sh[1:])
+        return inputs
 
 
     # --------------------------------------------------------------------------
@@ -377,7 +393,7 @@ def test_classifier():
     print('total number of test data', test_data_loader.num_examples)
     image_provider = ImageProvider()
 
-    cl = Ladder(input_dim=784, n_classes=10, do_train=True, scope='ladder')
+    cl = ConvoLadder(input_dim=784, n_classes=10, do_train=True, scope='ladder')
     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
         n_iter, save_model_every_n_iter, path_to_model)
