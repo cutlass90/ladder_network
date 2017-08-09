@@ -38,14 +38,20 @@ Reshape = namedtuple('Reshape', ['shape'])
 
 encoder = [                        # b x 784
     DenseLayer(1000, tf.nn.relu),  # b x 1000
-    DenseLayer(500, tf.nn.relu),   # b x 500
+    DenseLayer(625, tf.nn.relu),   # b x 625
+    Reshape([-1,1,1,625]),
+    ConvoLayer(filters=625, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),
+    Reshape([-1,625]),
     DenseLayer(100, tf.nn.relu),   # b x 100
     DenseLayer(10, tf.nn.softmax)  # b x 10
     ]
 
 decoder = [                                                                                     # b x 1 x 1 10
-    DenseLayer(100, tf.nn.relu),
-    DenseLayer(500, tf.nn.relu),
-    DenseLayer(1000, tf.nn.relu),
-    DenseLayer(784, tf.nn.relu)
+    DenseLayer(100, None),
+    Reshape([-1,1,1,100]),
+    DeConvoLayer(filters=625, kernel_size=1, strides=1, padding='valid', activation=None),
+    Reshape([-1, 625]),
+    DenseLayer(625, None),
+    DenseLayer(1000, None),
+    DenseLayer(784, None)
     ]

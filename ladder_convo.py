@@ -27,7 +27,7 @@ class ConvoLadder(Model):
 
         self.noise_std = 0.3
         self.number_of_layers = self.get_number_of_layers(encoder_structure)
-        self.lambda_ = [1000, 10,  0.1, 0.1, 0.1] #importanse for each layer respectively
+        self.lambda_ = [1000, 10,  0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
         if len(self.lambda_) != (self.number_of_layers + 1):
             raise ValueError('Length of lambda_ must fit encoder architecture.\
                 Expected {0}, provided {1}'.format(self.number_of_layers + 1,
