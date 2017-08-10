@@ -9,6 +9,7 @@ from tensorflow.contrib.layers.python.layers.layers import batch_norm
 from model_abstract import Model
 from param import encoder as encoder_structure
 from param import decoder as decoder_structure
+from param import layer_importants
 
 
 class ConvoLadder(Model):
@@ -27,7 +28,7 @@ class ConvoLadder(Model):
 
         self.noise_std = 0.3
         self.number_of_layers = self.get_number_of_layers(encoder_structure)
-        self.lambda_ = [1000, 10,  0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
+        self.lambda_ = layer_importants #importanse for each layer respectively
         if len(self.lambda_) != (self.number_of_layers + 1):
             raise ValueError('Length of lambda_ must fit encoder architecture.\
                 Expected {0}, provided {1}'.format(self.number_of_layers + 1,
@@ -247,8 +248,12 @@ class ConvoLadder(Model):
             print('z_noised', self.z_noised[L-i-1])
             z_est = self.g_gauss(self.z_noised[L-i-1], u, layer_size)
             print('z_est',z_est)
-            self.z_denoised.append(tf.reshape(
-                (z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-9), [-1, layer_size]))
+            z_denoised = tf.reshape((z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-9),
+                [-1, layer_size])
+            print('z_denoised', z_denoised)
+            print('self.mean[L-i-1]', self.mean[L-i-1])
+            print('self.std[L-i-1]', self.std[L-i-1])
+            self.z_denoised.append(z_denoised)
             self.layer_sizes.append(layer_size)
             i += 1
         self.layer_sizes = list(reversed(self.layer_sizes))    

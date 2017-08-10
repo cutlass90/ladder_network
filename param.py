@@ -39,19 +39,23 @@ Reshape = namedtuple('Reshape', ['shape'])
 encoder = [                        # b x 784
     DenseLayer(1000, tf.nn.relu),  # b x 1000
     DenseLayer(625, tf.nn.relu),   # b x 625
-    Reshape([-1,1,1,625]),
-    ConvoLayer(filters=625, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),
-    Reshape([-1,625]),
+    Reshape([-1,5,5,25]),          # b x 5 x 5 x 25
+    ConvoLayer(filters=25, kernel_size=2, strides=1, padding='same', activation=tf.nn.relu), # b x 5 x 5 x 25
+    Reshape([-1,625]),             # b x 625
     DenseLayer(100, tf.nn.relu),   # b x 100
     DenseLayer(10, tf.nn.softmax)  # b x 10
     ]
 
-decoder = [                                                                                     # b x 1 x 1 10
-    DenseLayer(100, None),
-    Reshape([-1,1,1,100]),
-    DeConvoLayer(filters=625, kernel_size=1, strides=1, padding='valid', activation=None),
+decoder = [                  # b x 10
+    DenseLayer(100, None),   # b x 100
+    Reshape([-1,1,1,100]),   # b x 1 x 1 x 100
+    DeConvoLayer(filters=25, kernel_size=5, strides=1, padding='valid', activation=None),    # b x 5 x 5 x 25
     Reshape([-1, 625]),
     DenseLayer(625, None),
     DenseLayer(1000, None),
     DenseLayer(784, None)
     ]
+# layer_importants = [1000, 10,  0.1, 0.1, 0.1, 0.1]
+# layer_importants = [1000, 0.1e-5,  0.1e-5, 0.1e-5, 0.1e-5, 0.1e-5]
+layer_importants = [0.1, 0.1,  10, 100, 10, 0.1]
+
