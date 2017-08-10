@@ -45,7 +45,8 @@ class ConvoLadder(Model):
 
                 self.cost_sup = self.create_sup_cost(self.labels, self.logits_lab_noised)
                 self.cost_unsup = self.create_unsup_cost(self.z_clear, self.z_denoised)
-                summary = self.create_summary(self.labels, self.logits_lab_clear)
+                summary = self.create_summary(self.labels, self.logits_unlab_clear)
+                # self.train = self.create_optimizer_graph(self.cost_sup)
                 self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
                 self.train_writer, self.test_writer = self.create_summary_writers(
                     'summary/ladder_convo')
@@ -73,17 +74,17 @@ class ConvoLadder(Model):
 
         # --- === supervised mode === ---
         # clean pass
-        self.logits_lab_clear, _, _, _ = self.encoder(self.inputs,
-            reuse=False, noise_std=0, save_statistic=True)
+        # _, _, _, _ = self.encoder(self.inputs,
+        #     reuse=False, noise_std=0, save_statistic=True)
         #noised pass
         self.logits_lab_noised, _, _, _ = self.encoder(self.inputs,
-            reuse=True, noise_std=self.noise_std, save_statistic=False)
+            reuse=False, noise_std=self.noise_std, save_statistic=False)
 
         # --- === unsupervised mode === ---
         # clean pass
-        _, self.mean, self.std, self.z_clear = self.encoder(
+        self.logits_unlab_clear, self.mean, self.std, self.z_clear = self.encoder(
             self.images, reuse=True, noise_std=0,
-            save_statistic=False)
+            save_statistic=True)
         # noised pass
         self.logits_unlab_noised, _, _, self.z_noised = self.encoder(self.images,
              reuse=True, noise_std=self.noise_std,
@@ -352,7 +353,7 @@ class ConvoLadder(Model):
         with tf.variable_scope('optimizer_graph'):
             optimizer = tf.train.AdamOptimizer(self.learn_rate)
             grad_var = optimizer.compute_gradients(cost)
-            grad_var = [(tf.clip_by_value(g, -10, 10), v) for g,v in grad_var]
+            grad_var = [(tf.clip_by_value(g, -1, 1), v) for g,v in grad_var]
             train = optimizer.apply_gradients(grad_var)
 
         return train
@@ -361,8 +362,8 @@ class ConvoLadder(Model):
     # --------------------------------------------------------------------------
     def train_step(self, inputs_lab, inputs_unlab, labels, weight_decay,
         learn_rate, keep_prob):
-        # inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
-        # inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
+        inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
+        inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
 
         feedDict = {self.images : inputs_unlab,
             self.inputs : inputs_lab,
@@ -377,8 +378,8 @@ class ConvoLadder(Model):
     # --------------------------------------------------------------------------
     def save_summaries(self, inputs_lab, inputs_unlab, labels, weight_decay,
         keep_prob, is_training, writer, it):
-        # inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
-        # inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
+        inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
+        inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
 
         feedDict = {self.images : inputs_unlab,
             self.inputs : inputs_lab,
@@ -404,9 +405,9 @@ class ConvoLadder(Model):
         learn_rate_end, keep_prob, n_iter, save_model_every_n_iter, path_to_model):
 
         def get_acc():
-            # inp = np.reshape(test_data_loader.images, [-1] + self.input_shape)
-            inp = test_data_loader.images
-            acc = self.sess.run(self.accuracy, {self.inputs : inp,
+            inp = np.reshape(test_data_loader.images, [-1] + self.input_shape)
+            # inp = test_data_loader.images
+            acc = self.sess.run(self.accuracy, {self.images : inp,
             self.labels : test_data_loader.labels, self.is_training : False})
             return acc
 
@@ -425,7 +426,7 @@ class ConvoLadder(Model):
             self.train_step(train_batch[0], images, train_batch[1], weight_decay,
                 learn_rate, keep_prob)
             if current_iter%10 == 0:
-                self.save_summaries(train_batch[0], images, train_batch[1],
+                self.save_summaries(train_batch[0], train_batch[0], train_batch[1],
                     weight_decay, keep_prob, True, self.train_writer, current_iter)
                 self.save_summaries(test_batch[0], test_batch[0], test_batch[1],
                     weight_decay, 1, False, self.test_writer, current_iter)
@@ -433,8 +434,8 @@ class ConvoLadder(Model):
             if (current_iter+1) % save_model_every_n_iter == 0:
                 self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
 
-            if current_iter%5000 == 0:
-                print('Iteration {0}, accuracy {1}'.format(current_iter+1, get_acc()))
+            # if current_iter%5000 == 0:
+            #     print('Iteration {0}, accuracy {1}'.format(current_iter+1, get_acc()))
         self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
         print('\nTrain finished!')
         print('Final accuracy {0}'.format(get_acc()))
@@ -478,7 +479,7 @@ def test_classifier():
     print('total number of test data', test_data_loader.num_examples)
     image_provider = ImageProvider()
 
-    cl = ConvoLadder(input_shape=[784], n_classes=10, do_train=True, scope='ladder')
+    cl = ConvoLadder(input_shape=[28, 28, 1], n_classes=10, do_train=True, scope='ladder')
     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
         n_iter, save_model_every_n_iter, path_to_model)
