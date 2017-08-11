@@ -326,9 +326,12 @@ class ConvoLadder(Model):
             self.layer_sizes, z_clear, z_denoised):
             # print('\n', lamb, layer_width, z_cl, z_denois)
 
-            self.denoise_loss_list.append(1e-10*lamb/layer_width*tf.reduce_mean(tf.square(
-                tf.norm(z_cl-z_denois, axis=1))))
+            # self.denoise_loss_list.append(lamb/layer_width*tf.reduce_mean(tf.square(
+            #     tf.norm(z_cl-z_denois, axis=1))))
 
+            self.denoise_loss_list.append(tf.reduce_mean(tf.reduce_sum(
+                tf.square(z_cl-z_denois), 1))/layer_width*lamb)
+            
         self.denoise_loss = tf.add_n(self.denoise_loss_list)
         # self.denoise_loss = tf.Print(self.denoise_loss, [self.denoise_loss],
         #     message='denoise_loss', first_n=10)

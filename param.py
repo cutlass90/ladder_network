@@ -35,7 +35,7 @@ decoder = [                                                                     
     ConvoLayer(filters=1000, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu), # b x 3 x 3 x 1000
     DeConvoLayer(filters=1, kernel_size=26, strides=1, padding='valid', activation=tf.nn.relu) # b x 28 x 28 x 1
     ]
-layer_importants = [0.1e-5, 0.1e-5, 1000, 0.1e-5, 0.1e-5, 0.1e-5, 0.1e-5]
+layer_importants = [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1]
 
 
 
