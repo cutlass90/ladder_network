@@ -45,9 +45,8 @@ class ConvoLadder(Model):
 
                 self.cost_sup = self.create_sup_cost(self.labels, self.logits_lab_noised)
                 self.cost_unsup = self.create_unsup_cost(self.z_clear, self.z_denoised)
+                self.train = self.create_optimizer_graph(self.cost_sup, self.cost_unsup)
                 summary = self.create_summary(self.labels, self.logits_unlab_clear)
-                # self.train = self.create_optimizer_graph(self.cost_sup)
-                self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
                 self.train_writer, self.test_writer = self.create_summary_writers(
                     'summary/ladder_convo')
                 self.train_writer.add_graph(self.graph)
@@ -96,7 +95,7 @@ class ConvoLadder(Model):
 
         self.decoder(inputs=y)
     
-        # [print(v) for v in tf.trainable_variables()]
+        [print(v) for v in tf.trainable_variables()]
         print()
         print('len z_clear', len(self.z_clear))
         print('len z_noised', len(self.z_noised))
@@ -165,7 +164,7 @@ class ConvoLadder(Model):
                 z_pre = tf.layers.conv2d(h, layer.filters, layer.kernel_size,
                     layer.strides, layer.padding,
                     kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                    reuse=reuse, name='encoder'+str(i))
+                    reuse=reuse, name='encoder_layer'+str(i))
             elif type(layer).__name__ == 'MaxPool':
                 z_pre = tf.layers.max_pooling2d(h, layer.pool_size,
                     layer.strides, layer.padding)
@@ -175,7 +174,7 @@ class ConvoLadder(Model):
             elif type(layer).__name__ == 'DenseLayer':
                 z_pre = tf.layers.dense(inputs=h, units=layer.units, activation=None,
                     kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                    reuse=reuse, name='encoder'+str(i))
+                    reuse=reuse, name='encoder_layer'+str(i))
             else:
                 raise NotImplementedError('Type {} of layer is not implemented'.format(
                     type(layer).__name__))
@@ -196,9 +195,9 @@ class ConvoLadder(Model):
             z_list.append(tf.reshape(z, [-1, layer_size]))
 
             with tf.variable_scope('gamma_beta', reuse=reuse):
-                beta = tf.get_variable(name='beta'+str(i),
+                beta = tf.get_variable(name='beta_layer'+str(i),
                     initializer=tf.zeros([layer_size]))
-                gamma = tf.get_variable(name='gamma'+str(i),
+                gamma = tf.get_variable(name='gamma_layer'+str(i),
                     initializer=tf.ones([layer_size]))
             h = gamma*(z+beta)
             if (type(layer).__name__ == 'ConvoLayer' or
@@ -219,7 +218,7 @@ class ConvoLadder(Model):
         u = self.local_batch_norm(inputs)
         z_est = self.g_gauss(self.z_noised[L], u, self.n_classes)
         self.z_denoised.append(tf.reshape(
-            (z_est - self.mean[L])/(self.std[L] + 1e-9), [-1, self.n_classes]))
+            (z_est - self.mean[L])/(self.std[L] + 1e-5), [-1, self.n_classes]))
         self.layer_sizes.append(z_est.get_shape().as_list()[-1])
         
         i = 0
@@ -231,14 +230,17 @@ class ConvoLadder(Model):
             if type(layer).__name__ == 'ConvoLayer':
                 u = tf.layers.conv2d(z_est, layer.filters, layer.kernel_size,
                     layer.strides, layer.padding,
-                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
             elif type(layer).__name__ == 'DeConvoLayer':
                 u = tf.layers.conv2d_transpose(z_est, layer.filters,
                     layer.kernel_size, layer.strides, layer.padding,
-                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
             elif type(layer).__name__ == 'DenseLayer':
                 u = tf.layers.dense(inputs=z_est, units=layer.units, activation=None,
-                    kernel_initializer=tf.contrib.layers.xavier_initializer())
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
             else:
                 raise NotImplementedError('Type {} of layer is not implemented'.format(
                     type(layer).__name__))
@@ -247,9 +249,10 @@ class ConvoLadder(Model):
 
             u = self.local_batch_norm(u)
             print('z_noised', self.z_noised[L-i-1])
-            z_est = self.g_gauss(self.z_noised[L-i-1], u, layer_size)
+            with tf.variable_scope("denoise_func_layer{}".format(i)):
+                z_est = self.g_gauss(self.z_noised[L-i-1], u, layer_size)
             print('z_est',z_est)
-            z_denoised = tf.reshape((z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-9),
+            z_denoised = tf.reshape((z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-5),
                 [-1, layer_size])
             print('z_denoised', z_denoised)
             print('self.mean[L-i-1]', self.mean[L-i-1])
@@ -266,7 +269,7 @@ class ConvoLadder(Model):
         sh = inputs.get_shape().as_list()
         inputs = tf.reshape(inputs, shape=[-1, sh[-1]])
         mean, var = tf.nn.moments(inputs, axes=[0])
-        std = tf.sqrt(var + 1e-9)
+        std = tf.sqrt(var + 1e-5)
         return mean, std
 
 
@@ -275,7 +278,7 @@ class ConvoLadder(Model):
     def local_batch_norm(self, inputs):
         # simple batch norm by last dimention
         mean, std = self.get_mean_std(inputs)        
-        return (inputs - mean)/(std + 1e-9)
+        return (inputs - mean)/(std + 1e-5)
 
 
     # --------------------------------------------------------------------------
@@ -307,10 +310,10 @@ class ConvoLadder(Model):
             logits=logits))
         self.L2_loss = self.weight_decay*sum([tf.reduce_mean(tf.square(var))
             for var in tf.trainable_variables()])
-        self.cross_entropy = tf.Print(self.cross_entropy, [self.cross_entropy],
-            message='self.cross_entropy', first_n=10)
-        self.L2_loss = tf.Print(self.L2_loss, [self.L2_loss],
-            message='self.L2_loss', first_n=10)
+        # self.cross_entropy = tf.Print(self.cross_entropy, [self.cross_entropy],
+        #     message='self.cross_entropy', first_n=10)
+        # self.L2_loss = tf.Print(self.L2_loss, [self.L2_loss],
+        #     message='self.L2_loss', first_n=10)
 
         return self.cross_entropy + self.L2_loss
 
@@ -318,17 +321,17 @@ class ConvoLadder(Model):
     # --------------------------------------------------------------------------
     def create_unsup_cost(self, z_clear, z_denoised):
         print('create_unsup_cost')      
-        denoise_loss = []
+        self.denoise_loss_list = []
         for lamb, layer_width, z_cl, z_denois in zip(self.lambda_,
             self.layer_sizes, z_clear, z_denoised):
             # print('\n', lamb, layer_width, z_cl, z_denois)
 
-            denoise_loss.append(lamb/layer_width*tf.reduce_mean(tf.square(
+            self.denoise_loss_list.append(1e-10*lamb/layer_width*tf.reduce_mean(tf.square(
                 tf.norm(z_cl-z_denois, axis=1))))
 
-        self.denoise_loss = tf.add_n(denoise_loss)
-        self.denoise_loss = tf.Print(self.denoise_loss, [self.denoise_loss],
-            message='denoise_loss', first_n=10)
+        self.denoise_loss = tf.add_n(self.denoise_loss_list)
+        # self.denoise_loss = tf.Print(self.denoise_loss, [self.denoise_loss],
+        #     message='denoise_loss', first_n=10)
         return self.denoise_loss
 
 
@@ -343,18 +346,48 @@ class ConvoLadder(Model):
         for i in range(self.n_classes):
             summary.append(tf.summary.scalar('Class {} f1 score'.format(i), f1[i]))
         summary.append(tf.summary.scalar('Accuracy', self.accuracy))
-        
+
+        with tf.name_scope('Variables_grads'):
+            for var in tf.trainable_variables():
+                summary.append(tf.summary.scalar(var.name, tf.reduce_mean(var)))
+
+        with tf.name_scope("reconstract_loss_per_layer"):
+            for i, loss in enumerate(self.denoise_loss_list):
+                summary.append(tf.summary.scalar('layer_'.format(i), loss))
+
+        grad_sup = self.optimizer.compute_gradients(self.cost_sup)
+        grad_unsup = self.optimizer.compute_gradients(self.cost_unsup)
+
+        grad_sup_mean = tf.reduce_mean([tf.reduce_mean(tf.abs(t)) for t,n in grad_sup\
+                if t is not None])
+        grad_unsup_mean = tf.reduce_mean([tf.reduce_mean(tf.abs(t)) for t,n in grad_unsup\
+                if t is not None])
+        summary.append(tf.summary.scalar('grad_sup', grad_sup_mean))
+        summary.append(tf.summary.scalar('grad_unsup', grad_unsup_mean))
+
+        with tf.name_scope('supervised_gradients'):
+            for grad, n in grad_sup:
+                summary.append(tf.summary.scalar(n.name, tf.reduce_mean(grad)))
+
+        with tf.name_scope('unsupervised_gradients'):
+            for grad, n in grad_unsup:
+                summary.append(tf.summary.scalar(n.name, tf.reduce_mean(grad)))
+
+
         return summary
 
 
     # --------------------------------------------------------------------------
-    def create_optimizer_graph(self, cost):
+    def create_optimizer_graph(self, cost_sup, cost_unsup):
         print('create_optimizer_graph')
         with tf.variable_scope('optimizer_graph'):
-            optimizer = tf.train.AdamOptimizer(self.learn_rate)
-            grad_var = optimizer.compute_gradients(cost)
+            self.optimizer = tf.train.AdamOptimizer(self.learn_rate)
+            grad_var = self.optimizer.compute_gradients(cost_sup + cost_unsup)
             grad_var = [(tf.clip_by_value(g, -1, 1), v) for g,v in grad_var]
-            train = optimizer.apply_gradients(grad_var)
+            train = self.optimizer.apply_gradients(grad_var)
+
+
+
 
         return train
 
@@ -463,7 +496,7 @@ def test_classifier():
     weight_decay = 2e-5
     n_iter = 200000
     learn_rate_start = 1e-2
-    learn_rate_end = 1e-3
+    learn_rate_end = 1e-4
     keep_prob = 0.5
     save_model_every_n_iter = 15000
     path_to_model = 'models/ladder'
@@ -479,7 +512,7 @@ def test_classifier():
     print('total number of test data', test_data_loader.num_examples)
     image_provider = ImageProvider()
 
-    cl = ConvoLadder(input_shape=[28, 28, 1], n_classes=10, do_train=True, scope='ladder')
+    cl = ConvoLadder(input_shape=[28,28,1], n_classes=10, do_train=True, scope='ladder')
     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
         n_iter, save_model_every_n_iter, path_to_model)
