@@ -152,7 +152,6 @@ class Ladder(Model):
         h = inputs
         i = 0
         for layer in self.encoder_structure:
-            print('\n', i, layer)
             if type(layer).__name__ == 'Reshape':
                 h = tf.reshape(h, layer.shape)
                 continue
@@ -174,7 +173,6 @@ class Ladder(Model):
             else:
                 raise NotImplementedError('Type {} of layer is not implemented'.format(
                     type(layer).__name__))
-            print('z_pre', z_pre)
             layer_size = z_pre.get_shape().as_list()[-1]
 
             mean, std = self.get_mean_std(z_pre)

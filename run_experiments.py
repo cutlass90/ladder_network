@@ -14,11 +14,14 @@ class ImageProvider:
 
 train_im, train_l, test_im, test_l = my_mnist.read_data_sets("MNIST_data/")
 
-class_distrib = {i:i+1 for i in range(10)}
+# class_distrib = {i:i+1 for i in range(10)}
+class_distrib = {0:18, 1:16, 2:15, 3:13, 4:11, 5:9, 6:7, 7:5, 8:4, 9:2}
 lab_im, lab_t, rest_im, rest_t = tools.split_data_set(class_distrib, train_im,
     train_l, verbose=True)
 
-class_distrib = {i:5400 for i in range(10)}
+# class_distrib = {i:5400 for i in range(10)}
+class_distrib = {0:5400, 1:4860, 2:4320, 3:3780, 4:3240, 5:2700, 6:2160,
+                 7:1620, 8:1080, 9:540}
 unlab_im, unlab_t, rest_im, rest_t = tools.split_data_set(class_distrib, rest_im,
     rest_t)
 print('\n labeled summary:')
