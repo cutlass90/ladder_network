@@ -7,3 +7,4 @@ models/
 MNIST_data/
 pics/
 test_bn/
+untrack/

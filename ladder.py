@@ -5,24 +5,38 @@ import tensorflow as tf
 import numpy as np
 from tqdm import tqdm
 from tensorflow.contrib.layers.python.layers.layers import batch_norm
-# from my_layers import batch_norm as my_batch_norm
+
 from model_abstract import Model
 
 
 class Ladder(Model):
 
     # --------------------------------------------------------------------------
-    def __init__(self, input_dim, n_classes, do_train, scope):
+    def __init__(self, input_shape, n_classes, encoder_structure,
+        decoder_structure, layer_importants, noise_std, do_train, scope):
+        """ 
+        Args:
+            input_shape: list of integer, shape of input images
+        """
+        self.debug = False
 
-        self.input_dim = input_dim
+        self.input_shape = input_shape
         self.n_classes = n_classes
+        self.encoder_structure = encoder_structure
+        self.decoder_structure = decoder_structure
+        self.lambda_ = layer_importants #importanse for each layer respectively
+        self.noise_std = noise_std
         self.do_train = do_train
 
-        self.structure = [1000, 500, 250, 250, 250, self.n_classes]
-        self.lambda_ = [1000, 10,  0.1, 0.1, 0.1, 0.1, 0.1] #importanse for each layer respectively
-        self.noise_std = 0.3
+
+        self.number_of_layers = self.get_number_of_layers(encoder_structure)
+        if len(self.lambda_) != (self.number_of_layers + 1):
+            raise ValueError('Length of lambda_ must fit encoder architecture.\
+                Expected {0}, provided {1}'.format(self.number_of_layers + 1,
+                    len(self.lambda_)))
 
         self.z_denoised = []
+        self.layer_sizes = []
         self.graph = tf.Graph()
         with self.graph.as_default():
             tf.set_random_seed(1)
@@ -32,10 +46,10 @@ class Ladder(Model):
 
                 self.cost_sup = self.create_sup_cost(self.labels, self.logits_lab_noised)
                 self.cost_unsup = self.create_unsup_cost(self.z_clear, self.z_denoised)
-                summary = self.create_summary(self.labels, self.logits_lab_clear)
-                self.train = self.create_optimizer_graph(self.cost_sup+self.cost_unsup)
-                self.train_writer, self.test_writer = self.create_summary_writers(
-                    'summary/ladder')
+                self.train = self.create_optimizer_graph(self.cost_sup, self.cost_unsup)
+                summary = self.create_summary(self.labels, self.logits_unlab_clear)
+                self.train_writer, self.test_writer = self.create_summary_writers()
+                self.train_writer.add_graph(self.graph)
                 self.merged = tf.summary.merge(summary)
 
             self.sess = self.create_session()
@@ -58,39 +72,40 @@ class Ladder(Model):
         self.is_training = self.input_graph() # inputs shape is # b*n_f x h1 x c1
 
         # --- === supervised mode === ---
-        # clean pass
-        self.logits_lab_clear, _, _, _ = self.encoder(self.inputs, structure=self.structure,
-            reuse=False, noise_std=0, save_statistic=True)
         #noised pass
-        self.logits_lab_noised, _, _, _ = self.encoder(self.inputs, structure=self.structure,
-            reuse=True, noise_std=self.noise_std, save_statistic=False)
+        self.logits_lab_noised, _, _, _ = self.encoder(self.inputs,
+            reuse=False, noise_std=self.noise_std, save_statistic=False)
 
         # --- === unsupervised mode === ---
         # clean pass
-        _, self.mean, self.std, self.z_clear = self.encoder(
-            self.images, structure=self.structure, reuse=True, noise_std=0,
-            save_statistic=False)
+        self.logits_unlab_clear, self.mean, self.std, self.z_clear = self.encoder(
+            self.images, reuse=True, noise_std=0,
+            save_statistic=True)
         # noised pass
         self.logits_unlab_noised, _, _, self.z_noised = self.encoder(self.images,
-            structure=self.structure, reuse=True, noise_std=self.noise_std,
+             reuse=True, noise_std=self.noise_std,
             save_statistic=False)
 
-        y = tf.nn.softmax(self.logits_unlab_noised)
+        y = self.encoder_structure[-1].activation(self.logits_unlab_noised) # b x 10
 
-        self.decoder(inputs=y, structure=self.structure)
+        self.decoder(inputs=y)
     
-        # [print(v) for v in tf.trainable_variables()]
-        # print()
-        # print('len z_clear', len(self.z_clear))
-        # print('len z_noised', len(self.z_noised))
-        # print('len z_denoised', len(self.z_denoised))
-        # for i in range(len(self.structure)+1):
-        #     print('\t ', i)
-        #     print('mean', self.mean[i])
-        #     print('std', self.std[i])
-        #     print('z_noised', self.z_noised[i])
-        #     print('z_clear', self.z_clear[i])
-        #     print('z_denoised', self.z_denoised[i])
+        if self.debug:
+            [print(v) for v in tf.trainable_variables()]
+            print()
+            print('len z_clear', len(self.z_clear))
+            print('len z_noised', len(self.z_noised))
+            print('len z_denoised', len(self.z_denoised))
+            print('len layer_sizes', len(self.layer_sizes))
+            for i in range(self.number_of_layers+1):
+                print('\t ', i)
+                print('mean', self.mean[i])
+                print('std', self.std[i])
+                print('z_noised', self.z_noised[i])
+                print('z_clear', self.z_clear[i])
+                print('z_denoised', self.z_denoised[i])
+                print('layer_sizes', self.layer_sizes[i])
+            print(self.layer_sizes)
 
         print('Done!')
 
@@ -98,10 +113,10 @@ class Ladder(Model):
     # --------------------------------------------------------------------------
     def input_graph(self):
         print('\tinput_graph')
-        images = tf.placeholder(tf.float32, shape=[None, self.input_dim],
+        images = tf.placeholder(tf.float32, shape=[None]+self.input_shape,
             name='images')
 
-        inputs = tf.placeholder(tf.float32, shape=[None, self.input_dim],
+        inputs = tf.placeholder(tf.float32, shape=[None]+self.input_shape,
             name='inputs')
 
         labels = tf.placeholder(tf.float32, shape=[None, self.n_classes],
@@ -124,26 +139,47 @@ class Ladder(Model):
                     stddev=std)
 
     # --------------------------------------------------------------------------
-    def encoder(self, inputs, structure, reuse, noise_std, save_statistic):
+    def encoder(self, inputs, reuse, noise_std, save_statistic):
         print('\tencoder')
         inputs = self.add_noise(inputs, noise_std)
         mean_list, std_list, z_list = [], [], []
-        L = len(structure)
+        L = self.number_of_layers
         
-        z_list.append(inputs)
+        z_list.append(tf.reshape(inputs, [-1, self.input_shape[-1]]))
         mean_list.append(0)
         std_list.append(1)
 
         h = inputs
-        for i, layer in enumerate(structure):
-            # print(i, layer)
-            z_pre = tf.layers.dense(inputs=h, units=layer, activation=None,
-                kernel_initializer=tf.contrib.layers.xavier_initializer(),
-                reuse=reuse, name='encoder'+str(i))
+        i = 0
+        for layer in self.encoder_structure:
+            print('\n', i, layer)
+            if type(layer).__name__ == 'Reshape':
+                h = tf.reshape(h, layer.shape)
+                continue
+            if type(layer).__name__ == 'ConvoLayer':
+                z_pre = tf.layers.conv2d(h, layer.filters, layer.kernel_size,
+                    layer.strides, layer.padding,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    reuse=reuse, name='encoder_layer'+str(i))
+            elif type(layer).__name__ == 'MaxPool':
+                z_pre = tf.layers.max_pooling2d(h, layer.pool_size,
+                    layer.strides, layer.padding)
+            elif type(layer).__name__ == 'AvrPool':
+                z_pre = tf.layers.average_pooling2d(h, layer.pool_size,
+                    layer.strides, layer.padding)
+            elif type(layer).__name__ == 'DenseLayer':
+                z_pre = tf.layers.dense(inputs=h, units=layer.units, activation=None,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    reuse=reuse, name='encoder_layer'+str(i))
+            else:
+                raise NotImplementedError('Type {} of layer is not implemented'.format(
+                    type(layer).__name__))
+            print('z_pre', z_pre)
+            layer_size = z_pre.get_shape().as_list()[-1]
 
-            mean, var = tf.nn.moments(z_pre, axes=[0])
+            mean, std = self.get_mean_std(z_pre)
             mean_list.append(mean)
-            std_list.append(tf.sqrt(var))
+            std_list.append(std)
 
             if save_statistic:
                 z = batch_norm(inputs=z_pre, scale=False, center=False,
@@ -152,60 +188,88 @@ class Ladder(Model):
             else:
                 z = self.local_batch_norm(z_pre)
             z = self.add_noise(z, noise_std)
-            z_list.append(z)
+            z_list.append(tf.reshape(z, [-1, layer_size]))
 
             with tf.variable_scope('gamma_beta', reuse=reuse):
-                sh = z.get_shape().as_list()[1]
-                beta = tf.get_variable(name='beta'+str(i),
-                    initializer=tf.zeros([sh]))
-                gamma = tf.get_variable(name='gamma'+str(i),
-                    initializer=tf.ones([sh]))
+                beta = tf.get_variable(name='beta_layer'+str(i),
+                    initializer=tf.zeros([layer_size]))
+                gamma = tf.get_variable(name='gamma_layer'+str(i),
+                    initializer=tf.ones([layer_size]))
             h = gamma*(z+beta)
-            h = tf.nn.relu(h) if i < L-1 else h
+            if (type(layer).__name__ == 'ConvoLayer' or
+                type(layer).__name__ == 'DenseLayer') and i < (L-1):
+                h = layer.activation(h)
+            i += 1 # increase number of layer
         return h, mean_list, std_list, z_list
 
 
     # --------------------------------------------------------------------------
-    def decoder(self, inputs, structure):
+    def decoder(self, inputs):
         print('\tdecoder')
-        structure = list(reversed(structure[:-1]))
-        structure.append(self.input_dim)
-        print('structure', structure)
-        L = len(structure)
+        L = self.number_of_layers
 
         u = self.local_batch_norm(inputs)
-        z_est = self.g_gauss(self.z_noised[L], u, self.n_classes)
-        self.z_denoised.append((z_est - self.mean[L])/(self.std[L] + 1e-9))
+        with tf.variable_scope("denoise_func"):
+            z_est = self.g_gauss(self.z_noised[L], u, self.n_classes)
+        self.z_denoised.append(tf.reshape(
+            (z_est - self.mean[L])/(self.std[L] + 1e-5), [-1, self.n_classes]))
+        self.layer_sizes.append(z_est.get_shape().as_list()[-1])
         
+        i = 0
+        for layer in self.decoder_structure:
+            if type(layer).__name__ == 'Reshape':
+                z_est = tf.reshape(z_est, layer.shape)
+                continue
+            if type(layer).__name__ == 'ConvoLayer':
+                u = tf.layers.conv2d(z_est, layer.filters, layer.kernel_size,
+                    layer.strides, layer.padding,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
+            elif type(layer).__name__ == 'DeConvoLayer':
+                u = tf.layers.conv2d_transpose(z_est, layer.filters,
+                    layer.kernel_size, layer.strides, layer.padding,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
+            elif type(layer).__name__ == 'DenseLayer':
+                u = tf.layers.dense(inputs=z_est, units=layer.units, activation=None,
+                    kernel_initializer=tf.contrib.layers.xavier_initializer(),
+                    name='decoder_layer'+str(i))
+            else:
+                raise NotImplementedError('Type {} of layer is not implemented'.format(
+                    type(layer).__name__))
+            layer_size = u.get_shape().as_list()[-1]
 
-        for i, layer in enumerate(structure):
-            # print(i, layer)
-            u = tf.layers.dense(inputs=z_est, units=layer, activation=None,
-                kernel_initializer=tf.contrib.layers.xavier_initializer())
             u = self.local_batch_norm(u)
-            # print('u',u)
-            # print('z_noised', self.z_noised[L-i-1])
-            z_est = self.g_gauss(self.z_noised[L-i-1], u, layer)
-            # print('z_est',z_est)
-            self.z_denoised.append((z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-9))
-            
+            with tf.variable_scope("denoise_func_layer{}".format(i)):
+                z_est = self.g_gauss(self.z_noised[L-i-1], u, layer_size)
+            z_denoised = tf.reshape((z_est - self.mean[L-i-1])/(self.std[L-i-1] + 1e-5),
+                [-1, layer_size])
+            self.z_denoised.append(z_denoised)
+            self.layer_sizes.append(layer_size)
+            i += 1 # increase number of layer
+        self.layer_sizes = list(reversed(self.layer_sizes))    
         self.z_denoised = list(reversed(self.z_denoised))
 
 
-
     # --------------------------------------------------------------------------
-    def local_batch_norm(self, inputs, mean=None, var=None):
-        # simple batch norm by last dimention
+    def get_mean_std(self, inputs):
         sh = inputs.get_shape().as_list()
         inputs = tf.reshape(inputs, shape=[-1, sh[-1]])
-        if mean is None or var is None:
-            mean, var = tf.nn.moments(inputs, axes=[0])
-        inv = tf.rsqrt(var + 1e-9)
-        return (inputs - mean)*inv
+        mean, var = tf.nn.moments(inputs, axes=[0])
+        std = tf.sqrt(var + 1e-5)
+        return mean, std
+
+
+    # --------------------------------------------------------------------------
+    def local_batch_norm(self, inputs):
+        # simple batch norm by last dimention
+        mean, std = self.get_mean_std(inputs)        
+        return (inputs - mean)/(std + 1e-5)
 
 
     # --------------------------------------------------------------------------
     def g_gauss(self, z_noised, u, size):
+        z_noised = tf.reshape(z_noised, tf.shape(u))
         "gaussian denoising function proposed in the original paper"
         wi = lambda inits, name: tf.Variable(inits * tf.ones([size]), name=name)
         a1 = wi(0., 'a1')
@@ -237,19 +301,13 @@ class Ladder(Model):
 
     # --------------------------------------------------------------------------
     def create_unsup_cost(self, z_clear, z_denoised):
-        print('create_unsup_cost')      
-        denoise_loss = []
-        for lamb, layer_width, z_cl, z_denois in zip(self.lambda_,
-            [self.input_dim]+self.structure, z_clear, z_denoised):
-            # print('\n', lamb, layer_width, z_cl, z_denois)
-
-            denoise_loss.append(lamb/layer_width*tf.reduce_mean(tf.square(
-                tf.norm(z_cl-z_denois, axis=1))))
-
-            # denoise_loss.append(tf.reduce_mean(tf.reduce_sum(
-            #     tf.square(z_cl-z_denois), 1))/layer_width*lamb)
-
-        self.denoise_loss = tf.add_n(denoise_loss)
+        print('create_unsup_cost')
+        self.denoise_loss_list = []
+        for lamb, layer_size, z_cl, z_denois in zip(self.lambda_,
+            self.layer_sizes, z_clear, z_denoised):
+            self.denoise_loss_list.append(tf.reduce_mean(tf.reduce_sum(
+                tf.square(z_cl-z_denois), 1))/layer_size*lamb)
+        self.denoise_loss = tf.add_n(self.denoise_loss_list)
         return self.denoise_loss
 
 
@@ -264,22 +322,52 @@ class Ladder(Model):
         for i in range(self.n_classes):
             summary.append(tf.summary.scalar('Class {} f1 score'.format(i), f1[i]))
         summary.append(tf.summary.scalar('Accuracy', self.accuracy))
-        
+
+        if self.debug:
+            with tf.name_scope('Variables_grads'):
+                for var in tf.trainable_variables():
+                    summary.append(tf.summary.scalar(var.name, tf.reduce_mean(var)))
+
+            with tf.name_scope("reconstract_loss_per_layer"):
+                for i, loss in enumerate(self.denoise_loss_list):
+                    summary.append(tf.summary.scalar('layer_'.format(i), loss))
+
+            grad_sup = self.optimizer.compute_gradients(self.cost_sup)
+            grad_unsup = self.optimizer.compute_gradients(self.cost_unsup)
+
+            grad_sup_mean = tf.reduce_mean([tf.reduce_mean(tf.abs(t)) for t,n in grad_sup\
+                    if t is not None])
+            grad_unsup_mean = tf.reduce_mean([tf.reduce_mean(tf.abs(t)) for t,n in grad_unsup\
+                    if t is not None])
+            summary.append(tf.summary.scalar('grad_sup', grad_sup_mean))
+            summary.append(tf.summary.scalar('grad_unsup', grad_unsup_mean))
+
+            with tf.name_scope('supervised_gradients'):
+                for grad, n in grad_sup:
+                    summary.append(tf.summary.scalar(n.name, tf.reduce_mean(grad)))
+
+            with tf.name_scope('unsupervised_gradients'):
+                for grad, n in grad_unsup:
+                    summary.append(tf.summary.scalar(n.name, tf.reduce_mean(grad)))
         return summary
 
 
     # --------------------------------------------------------------------------
-    def create_optimizer_graph(self, cost):
+    def create_optimizer_graph(self, cost_sup, cost_unsup):
         print('create_optimizer_graph')
         with tf.variable_scope('optimizer_graph'):
-            optimizer = tf.train.AdamOptimizer(self.learn_rate)
-            train = optimizer.minimize(cost)
+            self.optimizer = tf.train.AdamOptimizer(self.learn_rate)
+            grad_var = self.optimizer.compute_gradients(cost_sup + cost_unsup)
+            # grad_var = [(tf.clip_by_value(g, -1, 1), v) for g,v in grad_var]
+            train = self.optimizer.apply_gradients(grad_var)
         return train
 
 
     # --------------------------------------------------------------------------
     def train_step(self, inputs_lab, inputs_unlab, labels, weight_decay,
         learn_rate, keep_prob):
+        # inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
+        # inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
 
         feedDict = {self.images : inputs_unlab,
             self.inputs : inputs_lab,
@@ -294,6 +382,8 @@ class Ladder(Model):
     # --------------------------------------------------------------------------
     def save_summaries(self, inputs_lab, inputs_unlab, labels, weight_decay,
         keep_prob, is_training, writer, it):
+        # inputs_lab = np.reshape(inputs_lab, [-1]+self.input_shape)
+        # inputs_unlab = np.reshape(inputs_unlab, [-1]+self.input_shape)
 
         feedDict = {self.images : inputs_unlab,
             self.inputs : inputs_lab,
@@ -304,20 +394,28 @@ class Ladder(Model):
         summary = self.sess.run(self.merged, feed_dict=feedDict)
         writer.add_summary(summary, it)
 
+
+    # --------------------------------------------------------------------------
+    def get_number_of_layers(self, encoder_structure):
+        number_of_layers = 0
+        for layer in encoder_structure:
+            if type(layer).__name__ != 'Reshape':
+                number_of_layers += 1
+        return number_of_layers
+
     # --------------------------------------------------------------------------
     def train_model(self, image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay,  learn_rate_start,
         learn_rate_end, keep_prob, n_iter, save_model_every_n_iter, path_to_model):
 
         def get_acc():
-            acc = self.sess.run(self.accuracy, {self.inputs : test_data_loader.images,
+            # inp = np.reshape(test_data_loader.images, [-1] + self.input_shape)
+            inp = test_data_loader.images
+            acc = self.sess.run(self.accuracy, {self.images : inp,
             self.labels : test_data_loader.labels, self.is_training : False})
             return acc
 
         print('\n\t----==== Training ====----')
-
-
-            
         start_time = time.time()
         for current_iter in tqdm(range(n_iter)):
             learn_rate = self.scaled_exp_decay(learn_rate_start, learn_rate_end,
@@ -329,7 +427,7 @@ class Ladder(Model):
             self.train_step(train_batch[0], images, train_batch[1], weight_decay,
                 learn_rate, keep_prob)
             if current_iter%10 == 0:
-                self.save_summaries(train_batch[0], images, train_batch[1],
+                self.save_summaries(train_batch[0], train_batch[0], train_batch[1],
                     weight_decay, keep_prob, True, self.train_writer, current_iter)
                 self.save_summaries(test_batch[0], test_batch[0], test_batch[1],
                     weight_decay, 1, False, self.test_writer, current_iter)
@@ -348,6 +446,7 @@ class Ladder(Model):
 
 def test_classifier():
     from tensorflow.examples.tutorials.mnist import input_data
+    import param
 
     class ImageProvider:
         def __init__(self):
@@ -358,11 +457,12 @@ def test_classifier():
 
     labeled_size = 100
     batch_size = 100
-    weight_decay = 2e-3
+    weight_decay = 2e-5
     n_iter = 200000
     learn_rate_start = 1e-2
-    learn_rate_end = 1e-3
-    keep_prob = 0.5
+    learn_rate_end = 1e-4
+    keep_prob = 1
+    noise_std = 0.3
     save_model_every_n_iter = 15000
     path_to_model = 'models/ladder'
 
@@ -377,7 +477,9 @@ def test_classifier():
     print('total number of test data', test_data_loader.num_examples)
     image_provider = ImageProvider()
 
-    cl = Ladder(input_dim=784, n_classes=10, do_train=True, scope='ladder')
+    cl = Ladder(input_shape=[28*28*1], n_classes=10, encoder_structure=param.dense_encoder,
+    decoder_structure=param.dense_decoder, layer_importants=param.dense_layer_importants,
+    noise_std=noise_std, do_train=True, scope='ladder')
     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
         n_iter, save_model_every_n_iter, path_to_model)

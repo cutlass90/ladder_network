@@ -112,24 +112,3 @@ class Model(object):
             f1.append(2*pr*re/(pr+re+1e-5))
         accuracy = tf.reduce_sum(labels*pred)/(tf.cast(tf.shape(labels)[0], dtype=tf.float32))
         return (precision, recall, f1, accuracy)
-            
-
-# test
-
-# test get_metrics
-"""
-from sklearn.metrics import precision_recall_fscore_support, accuracy_score
-sess = tf.InteractiveSession()
-labels = tf.constant([[1, 0,  0], [0, 1, 0], [0,  0, 1]], dtype=tf.float32)
-logits = tf.constant([[1,-7, -5], [7,-1, 4], [-2, 2, 0]], dtype=tf.float32)
-y_pred = np.array(   [[1, 0,  0], [1, 0, 0], [0,  1, 0]])
-y_true = np.array(   [[1, 0,  0], [0, 1, 0], [0,  0, 1]])
-precision, recall, f1, accuracy = get_metrics(labels, logits)
-precision_, recall_, f1_, accuracy_ = sess.run([precision, recall, f1, accuracy])
-
-precision_t, recall_t, f1_t, _ = precision_recall_fscore_support(y_true, y_pred)
-accuracy_t =  accuracy_score(y_true, y_pred)
-
-print('True metrics ', precision_t, recall_t, f1_t, accuracy_t)
-print('Predicted metrics ', precision_, recall_, f1_, accuracy_)
-"""
