@@ -4,7 +4,7 @@ __pycache__
 *sublime-workspace
 summary/
 models/
-MNIST_data/
+datasets/
 pics/
 test_bn/
 untrack/

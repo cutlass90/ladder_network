@@ -316,9 +316,9 @@ class Ladder(Model):
         summary.append(tf.summary.scalar('L2 loss', self.L2_loss))
         summary.append(tf.summary.scalar('denoise_loss', self.denoise_loss))
 
-        precision, recall, f1, self.accuracy = self.get_metrics(labels, logits)
+        precision, recall, self.f1, self.accuracy = self.get_metrics(labels, logits)
         for i in range(self.n_classes):
-            summary.append(tf.summary.scalar('Class {} f1 score'.format(i), f1[i]))
+            summary.append(tf.summary.scalar('Class {} f1 score'.format(i), self.f1[i]))
         summary.append(tf.summary.scalar('Accuracy', self.accuracy))
 
         if self.debug:
@@ -401,17 +401,25 @@ class Ladder(Model):
                 number_of_layers += 1
         return number_of_layers
 
+
+    # --------------------------------------------------------------------------
+    def evaluate_metrics(self, images, labels, iteration):
+        acc, f1 = self.sess.run([self.accuracy, self.f1], {self.images : images,
+            self.labels : labels, self.is_training : False})
+        print('\n---=== Iteration {} ===---'.format(iteration))
+        print('accuracy = {}'.format(acc))
+        [print('class {0}, f1 = {1}'.format(i,f)) for i,f in enumerate(f1)]
+        with open('log.csv', 'a') as f:
+            f.write('Iteration {}\n'.format(iteration))
+            f.write('accuracy,{}\n'.format(acc))
+            f.write('class,f1-score\n')
+            [f.write('{},{}\n'.format(i,fscore)) for i,fscore in enumerate(f1)]
+
+
     # --------------------------------------------------------------------------
     def train_model(self, image_provider, labeled_data_loader, test_data_loader,
         batch_size, weight_decay,  learn_rate_start,
         learn_rate_end, keep_prob, n_iter, save_model_every_n_iter, path_to_model):
-
-        def get_acc():
-            # inp = np.reshape(test_data_loader.images, [-1] + self.input_shape)
-            inp = test_data_loader.images
-            acc = self.sess.run(self.accuracy, {self.images : inp,
-            self.labels : test_data_loader.labels, self.is_training : False})
-            return acc
 
         print('\n\t----==== Training ====----')
         start_time = time.time()
@@ -434,10 +442,13 @@ class Ladder(Model):
                 self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
 
             if current_iter%5000 == 0:
-                print('Iteration {0}, accuracy {1}'.format(current_iter+1, get_acc()))
+                self.evaluate_metrics(test_data_loader.images,
+                    test_data_loader.labels, current_iter)
         self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
         print('\nTrain finished!')
-        print('Final accuracy {0}'.format(get_acc()))
+        print('Final metrix')
+        self.evaluate_metrics(test_data_loader.images,
+                    test_data_loader.labels, current_iter)
         print("Training time --- %s seconds ---" % (time.time() - start_time))
 
 
