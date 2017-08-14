@@ -27,6 +27,7 @@ class Ladder(Model):
         self.lambda_ = layer_importants #importanse for each layer respectively
         self.noise_std = noise_std
         self.do_train = do_train
+        self.scope = scope
 
 
         self.number_of_layers = self.get_number_of_layers(encoder_structure)
@@ -409,7 +410,7 @@ class Ladder(Model):
         print('\n---=== Iteration {} ===---'.format(iteration))
         print('accuracy = {}'.format(acc))
         [print('class {0}, f1 = {1}'.format(i,f)) for i,f in enumerate(f1)]
-        with open('log.csv', 'a') as f:
+        with open(self.scope+'_log.csv', 'a') as f:
             f.write('Iteration {}\n'.format(iteration))
             f.write('accuracy,{}\n'.format(acc))
             f.write('class,f1-score\n')
