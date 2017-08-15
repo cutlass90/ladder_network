@@ -38,3 +38,7 @@ for i in range(10):
     cl.sess.close()
     tf.reset_default_graph()
 
+
+
+
+
