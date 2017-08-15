@@ -290,6 +290,10 @@ class Ladder(Model):
     # --------------------------------------------------------------------------
     def create_sup_cost(self, labels, logits):
         print('create_sup_cost')
+        # pred = tf.nn.softmax(logits)
+        # self.cross_entropy = tf.reduce_mean(tf.reduce_sum(
+        #     -labels*tf.log(tf.clip_by_value(pred, 1e-3, 1-1e-3))*np.array(
+        #     [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), 1))
         self.cross_entropy = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(
             labels=labels,
             logits=logits))
@@ -428,7 +432,7 @@ class Ladder(Model):
             learn_rate = self.scaled_exp_decay(learn_rate_start, learn_rate_end,
                 n_iter, current_iter)
 
-            images = image_provider.next_batch(batch_size)
+            images = image_provider(batch_size)
             train_batch = labeled_data_loader.next_batch(batch_size)
             test_batch = test_data_loader.next_batch(batch_size)
             self.train_step(train_batch[0], images, train_batch[1], weight_decay,
@@ -454,45 +458,39 @@ class Ladder(Model):
 
 
 
-def test_classifier():
-    from tensorflow.examples.tutorials.mnist import input_data
-    import param
+# def test_classifier():
+#     from tensorflow.examples.tutorials.mnist import input_data
+#     import param
 
-    class ImageProvider:
-        def __init__(self):
-            self.mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
-            print('total number of images', self.mnist.train.num_examples)
-        def next_batch(self, batch_size):
-            return self.mnist.train.next_batch(batch_size)[0]
 
-    labeled_size = 100
-    batch_size = 100
-    weight_decay = 2e-5
-    n_iter = 200000
-    learn_rate_start = 1e-2
-    learn_rate_end = 1e-4
-    keep_prob = 1
-    noise_std = 0.3
-    save_model_every_n_iter = 15000
-    path_to_model = 'models/ladder'
+#     labeled_size = 100
+#     batch_size = 100
+#     weight_decay = 2e-5
+#     n_iter = 200000
+#     learn_rate_start = 1e-2
+#     learn_rate_end = 1e-4
+#     keep_prob = 1
+#     noise_std = 0.3
+#     save_model_every_n_iter = 15000
+#     path_to_model = 'models/ladder'
 
-    mnist = input_data.read_data_sets("MNIST_data/", one_hot=True,
-        validation_size=labeled_size)
-    labeled_data_loader = mnist.validation
-    print('total number of labeled data', labeled_data_loader.num_examples)
-    l = labeled_data_loader.labels
-    print('Distribution of labeled data:')
-    [print('class_{0} = {1}'.format(i,v)) for i,v in enumerate(np.sum(l,0))]
-    test_data_loader = mnist.test
-    print('total number of test data', test_data_loader.num_examples)
-    image_provider = ImageProvider()
+#     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True,
+#         validation_size=labeled_size)
+#     labeled_data_loader = mnist.validation
+#     print('total number of labeled data', labeled_data_loader.num_examples)
+#     l = labeled_data_loader.labels
+#     print('Distribution of labeled data:')
+#     [print('class_{0} = {1}'.format(i,v)) for i,v in enumerate(np.sum(l,0))]
+#     test_data_loader = mnist.test
+#     print('total number of test data', test_data_loader.num_examples)
 
-    cl = Ladder(input_shape=[28*28*1], n_classes=10, encoder_structure=param.dense_encoder,
-    decoder_structure=param.dense_decoder, layer_importants=param.dense_layer_importants,
-    noise_std=noise_std, do_train=True, scope='ladder')
-    cl.train_model(image_provider, labeled_data_loader, test_data_loader,
-        batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
-        n_iter, save_model_every_n_iter, path_to_model)
+
+#     cl = Ladder(input_shape=[28*28*1], n_classes=10, encoder_structure=param.dense_encoder,
+#     decoder_structure=param.dense_decoder, layer_importants=param.dense_layer_importants,
+#     noise_std=noise_std, do_train=True, scope='ladder')
+#     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
+#         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
+#         n_iter, save_model_every_n_iter, path_to_model)
 
 ################################################################################
 # TESTING
