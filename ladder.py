@@ -87,7 +87,20 @@ class Ladder(Model):
              reuse=True, noise_std=self.noise_std,
             save_statistic=False)
 
-        y = self.encoder_structure[-1].activation(self.logits_unlab_noised) # b x 10
+        y = tf.nn.softmax(self.logits_unlab_noised) # b x 10
+
+        if self.debug:
+            [print(v) for v in tf.trainable_variables()]
+            print()
+            print('len z_clear', len(self.z_clear))
+            print('len z_noised', len(self.z_noised))
+            for i in range(self.number_of_layers+1):
+                print('\t ', i)
+                print('mean', self.mean[i])
+                print('std', self.std[i])
+                print('z_noised', self.z_noised[i])
+                print('z_clear', self.z_clear[i])
+                
 
         self.decoder(inputs=y)
     
@@ -146,16 +159,17 @@ class Ladder(Model):
         mean_list, std_list, z_list = [], [], []
         L = self.number_of_layers
         
-        z_list.append(tf.reshape(inputs, [-1, self.input_shape[-1]]))
-        mean_list.append(0)
-        std_list.append(1)
-
         h = inputs
         i = 0
         for layer in self.encoder_structure:
             if type(layer).__name__ == 'Reshape':
                 h = tf.reshape(h, layer.shape)
                 continue
+            if i == 0:
+                z_list.append(tf.reshape(h, [-1, self.input_shape[-1]]))
+                mean_list.append(0)
+                std_list.append(1)
+                if self.debug: print('input shape', h.get_shape())
             if type(layer).__name__ == 'ConvoLayer':
                 z_pre = tf.layers.conv2d(h, layer.filters, layer.kernel_size,
                     layer.strides, layer.padding,
@@ -198,6 +212,7 @@ class Ladder(Model):
             if (type(layer).__name__ == 'ConvoLayer' or
                 type(layer).__name__ == 'DenseLayer') and i < (L-1):
                 h = layer.activation(h)
+            if self.debug: print('layer {} shape'.format(i), h.get_shape())
             i += 1 # increase number of layer
         return h, mean_list, std_list, z_list
 
@@ -207,18 +222,20 @@ class Ladder(Model):
         print('\tdecoder')
         L = self.number_of_layers
 
-        u = self.local_batch_norm(inputs)
-        with tf.variable_scope("denoise_func"):
-            z_est = self.g_gauss(self.z_noised[L], u, self.n_classes)
-        self.z_denoised.append(tf.reshape(
-            (z_est - self.mean[L])/(self.std[L] + 1e-5), [-1, self.n_classes]))
-        self.layer_sizes.append(z_est.get_shape().as_list()[-1])
-        
         i = 0
+        z_est = inputs
         for layer in self.decoder_structure:
             if type(layer).__name__ == 'Reshape':
                 z_est = tf.reshape(z_est, layer.shape)
                 continue
+            if i == 0:
+                u = self.local_batch_norm(z_est)
+                if self.debug: print('input shape', u.get_shape())
+                with tf.variable_scope("denoise_func"):
+                    z_est = self.g_gauss(self.z_noised[L], u, self.n_classes)
+                self.z_denoised.append(tf.reshape(
+                    (z_est - self.mean[L])/(self.std[L] + 1e-5), [-1, self.n_classes]))
+                self.layer_sizes.append(z_est.get_shape().as_list()[-1])
             if type(layer).__name__ == 'ConvoLayer':
                 u = tf.layers.conv2d(z_est, layer.filters, layer.kernel_size,
                     layer.strides, layer.padding,
@@ -245,6 +262,7 @@ class Ladder(Model):
                 [-1, layer_size])
             self.z_denoised.append(z_denoised)
             self.layer_sizes.append(layer_size)
+            if self.debug: print('layer {} shape'.format(i), u.get_shape())
             i += 1 # increase number of layer
         self.layer_sizes = list(reversed(self.layer_sizes))    
         self.z_denoised = list(reversed(self.z_denoised))
@@ -446,14 +464,14 @@ class Ladder(Model):
             if (current_iter+1) % save_model_every_n_iter == 0:
                 self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
 
-            if current_iter%5000 == 0:
-                self.evaluate_metrics(test_data_loader.images,
-                    test_data_loader.labels, current_iter)
+            # if current_iter%5000 == 0:
+            #     self.evaluate_metrics(test_data_loader.images,
+            #         test_data_loader.labels, current_iter)
         self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
         print('\nTrain finished!')
         print('Final metrix')
-        self.evaluate_metrics(test_data_loader.images,
-                    test_data_loader.labels, current_iter)
+        # self.evaluate_metrics(test_data_loader.images,
+        #             test_data_loader.labels, current_iter)
         print("Training time --- %s seconds ---" % (time.time() - start_time))
 
 
