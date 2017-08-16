@@ -17,7 +17,8 @@ Reshape = namedtuple('Reshape', ['shape'])
 
 
 # ---=== convo model ===---
-convo_encoder = [                                                                                     # b x 28 x 28 x 1
+convo_encoder = [                                                                                    # b x 28 x 28 x 1
+    Reshape([-1, 28,28,1]),
     ConvoLayer(filters=1000, kernel_size=26, strides=1, padding='valid', activation=tf.nn.relu),# b x 3 x 3 x 1000
     ConvoLayer(filters=500, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),  # b x 3 x 3 x 500
     ConvoLayer(filters=100, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),  # b x 3 x 3 x 100
@@ -37,6 +38,30 @@ convo_decoder = [                                                               
     DeConvoLayer(filters=1, kernel_size=26, strides=1, padding='valid', activation=None) # b x 28 x 28 x 1
     ]
 convo_layer_importants = [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1]
+
+
+
+
+cifar10_encoder_s = [                                                                                    # b x 32 x 32 x 3
+    ConvoLayer(filters=1000, kernel_size=30, strides=1, padding='valid', activation=tf.nn.relu),# b x 3 x 3 x 1000
+    ConvoLayer(filters=500, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),  # b x 3 x 3 x 500
+    ConvoLayer(filters=100, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),  # b x 3 x 3 x 100
+    ConvoLayer(filters=10, kernel_size=1, strides=1, padding='valid', activation=tf.nn.relu),   # b x 3 x 3 x 10
+    AvrPool(pool_size=3, strides=1, padding='valid'),                                            # b x 1 x 1 x 10
+    Reshape([-1, 10]),                                                                           # b x 10
+    DenseLayer(10, tf.nn.softmax)                                                                # b x 10
+    ]
+
+cifar10_decoder_s = [                                                                                     # b x 10
+    DenseLayer(10, None),                                                                  # b x 10
+    Reshape([-1, 1, 1, 10]),                                                                    # b x 1 x 1 x 10
+    DeConvoLayer(filters=10, kernel_size=3, strides=1, padding='valid', activation=None),  # b x 3 x 3 x 10
+    ConvoLayer(filters=100, kernel_size=1, strides=1, padding='valid', activation=None),  # b x 3 x 3 x 100
+    ConvoLayer(filters=500, kernel_size=1, strides=1, padding='valid', activation=None),  # b x 3 x 3 x 500
+    ConvoLayer(filters=1000, kernel_size=1, strides=1, padding='valid', activation=None), # b x 3 x 3 x 1000
+    DeConvoLayer(filters=3, kernel_size=30, strides=1, padding='valid', activation=None) # b x 32 x 32 x 3
+    ]
+cifar10_layer_importants_s = [1000, 10, 0.1, 0.1, 0.1, 0.1, 0.1]
 
 
 

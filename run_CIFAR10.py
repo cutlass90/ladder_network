@@ -5,7 +5,7 @@ import ladder_tools
 import param
 from ladder import Ladder
 
-class_distrib_lab = {i:100 for i in range(10)}
+class_distrib_lab = {i:400 for i in range(10)}
 
 image_provider, labeled_data_loader, test_data_loader = ladder_tools.get_cifar10_loaders(
     class_distrib_lab)
