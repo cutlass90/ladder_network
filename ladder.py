@@ -18,7 +18,7 @@ class Ladder(Model):
         Args:
             input_shape: list of integer, shape of input images
         """
-        self.debug = True
+        self.debug = False
 
         self.input_shape = input_shape
         self.n_classes = n_classes
@@ -87,20 +87,7 @@ class Ladder(Model):
              reuse=True, noise_std=self.noise_std,
             save_statistic=False)
 
-        y = tf.nn.softmax(self.logits_unlab_noised) # b x 10
-
-        if self.debug:
-            [print(v) for v in tf.trainable_variables()]
-            print()
-            print('len z_clear', len(self.z_clear))
-            print('len z_noised', len(self.z_noised))
-            for i in range(self.number_of_layers+1):
-                print('\t ', i)
-                print('mean', self.mean[i])
-                print('std', self.std[i])
-                print('z_noised', self.z_noised[i])
-                print('z_clear', self.z_clear[i])
-                
+        y = tf.nn.softmax(self.logits_unlab_noised) # b x 10              
 
         self.decoder(inputs=y)
     

@@ -18,7 +18,7 @@ learn_rate_start = 1e-2
 learn_rate_end = 1e-4
 noise_std = 0.3
 keep_prob = 1
-save_model_every_n_iter = 150000
+save_model_every_n_iter = 15000
 path_to_model = 'models/ladder'
 
 cl = Ladder(input_shape=[32,32,3], n_classes=10, encoder_structure=param.cifar10_encoder,
