@@ -18,7 +18,7 @@ class Ladder(Model):
         Args:
             input_shape: list of integer, shape of input images
         """
-        self.debug = False
+        self.debug = True
 
         self.input_shape = input_shape
         self.n_classes = n_classes
@@ -166,7 +166,7 @@ class Ladder(Model):
                 h = tf.reshape(h, layer.shape)
                 continue
             if i == 0:
-                z_list.append(tf.reshape(h, [-1, self.input_shape[-1]]))
+                z_list.append(tf.reshape(h, [-1, h.get_shape().as_list()[-1]]))
                 mean_list.append(0)
                 std_list.append(1)
                 if self.debug: print('input shape', h.get_shape())
@@ -464,56 +464,15 @@ class Ladder(Model):
             if (current_iter+1) % save_model_every_n_iter == 0:
                 self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
 
-            # if current_iter%5000 == 0:
-            #     self.evaluate_metrics(test_data_loader.images,
-            #         test_data_loader.labels, current_iter)
+            if current_iter%5000 == 0:
+                self.evaluate_metrics(test_data_loader.images,
+                    test_data_loader.labels, current_iter)
         self.save_model(path=path_to_model, sess=self.sess, step=current_iter+1)
         print('\nTrain finished!')
         print('Final metrix')
-        # self.evaluate_metrics(test_data_loader.images,
-        #             test_data_loader.labels, current_iter)
+        self.evaluate_metrics(test_data_loader.images,
+                    test_data_loader.labels, current_iter)
         print("Training time --- %s seconds ---" % (time.time() - start_time))
-
-
-
-# def test_classifier():
-#     from tensorflow.examples.tutorials.mnist import input_data
-#     import param
-
-
-#     labeled_size = 100
-#     batch_size = 100
-#     weight_decay = 2e-5
-#     n_iter = 200000
-#     learn_rate_start = 1e-2
-#     learn_rate_end = 1e-4
-#     keep_prob = 1
-#     noise_std = 0.3
-#     save_model_every_n_iter = 15000
-#     path_to_model = 'models/ladder'
-
-#     mnist = input_data.read_data_sets("MNIST_data/", one_hot=True,
-#         validation_size=labeled_size)
-#     labeled_data_loader = mnist.validation
-#     print('total number of labeled data', labeled_data_loader.num_examples)
-#     l = labeled_data_loader.labels
-#     print('Distribution of labeled data:')
-#     [print('class_{0} = {1}'.format(i,v)) for i,v in enumerate(np.sum(l,0))]
-#     test_data_loader = mnist.test
-#     print('total number of test data', test_data_loader.num_examples)
-
-
-#     cl = Ladder(input_shape=[28*28*1], n_classes=10, encoder_structure=param.dense_encoder,
-#     decoder_structure=param.dense_decoder, layer_importants=param.dense_layer_importants,
-#     noise_std=noise_std, do_train=True, scope='ladder')
-#     cl.train_model(image_provider, labeled_data_loader, test_data_loader,
-#         batch_size, weight_decay, learn_rate_start, learn_rate_end, keep_prob,
-#         n_iter, save_model_every_n_iter, path_to_model)
-
-################################################################################
-# TESTING
-if __name__ == '__main__':
-    test_classifier()
 
 
 
